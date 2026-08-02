@@ -1,0 +1,16 @@
+{
+  "name": "weight-log",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hacker's Diet style weight logging and trend tracking",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "allowScripts": {
+    "workerd@1.20260730.1": true
+  }
+}

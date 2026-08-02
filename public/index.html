@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weight Log</title>
+<link rel="stylesheet" href="style.css?v=2">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9878;&#65039;</text></svg>">
+</head>
+<body>
+
+<header>
+  <h1>Weight Log</h1>
+  <nav id="user-nav" hidden>
+    <span id="nav-email"></span>
+    <div class="unit-toggle" id="unit-toggle" role="group" aria-label="Weight unit">
+      <button type="button" data-unit="lb">lb</button>
+      <button type="button" data-unit="kg">kg</button>
+    </div>
+    <button type="button" id="import-btn">Import CSV</button>
+    <input type="file" id="import-file" accept=".csv,text/csv" hidden>
+    <a href="/api/export.csv" id="export-link" download>Export CSV</a>
+    <button type="button" id="logout-btn">Sign out</button>
+  </nav>
+</header>
+
+<main>
+
+  <!-- Sign in / register -->
+  <section id="auth-view" hidden>
+    <div class="auth-card">
+      <div class="auth-tabs">
+        <button type="button" id="tab-login" class="active">Sign in</button>
+        <button type="button" id="tab-register">Create account</button>
+      </div>
+      <form id="auth-form">
+        <label>Email
+          <input type="email" id="auth-email" autocomplete="username" required>
+        </label>
+        <label>Password
+          <input type="password" id="auth-password" autocomplete="current-password" minlength="8" required>
+        </label>
+        <label id="unit-row" hidden>Weigh in
+          <select id="auth-unit">
+            <option value="lb">Pounds (lb)</option>
+            <option value="kg">Kilograms (kg)</option>
+          </select>
+        </label>
+        <button type="submit" id="auth-submit">Sign in</button>
+        <p id="auth-error" class="error" role="alert" hidden></p>
+      </form>
+      <p class="auth-blurb">Log your weight daily; the red line shows the real
+      trend beneath the day-to-day noise — the method from
+      <a href="https://www.fourmilab.ch/hackdiet/" target="_blank" rel="noopener">The Hacker's Diet</a>.</p>
+    </div>
+  </section>
+
+  <!-- Main app -->
+  <section id="log-view" hidden>
+    <div class="month-bar">
+      <button type="button" id="prev-month" aria-label="Previous month">&#9664;</button>
+      <h2 id="month-title"></h2>
+      <button type="button" id="next-month" aria-label="Next month">&#9654;</button>
+      <button type="button" id="today-btn">Today</button>
+    </div>
+
+    <div id="chart-wrap"></div>
+
+    <div id="stats" class="stats"></div>
+
+    <table id="log-table">
+      <thead>
+        <tr><th>Day</th><th></th><th class="num">Weight</th><th class="num">Trend</th><th class="num">Var</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+</main>
+
+<footer>
+  <p>Trend: exponentially smoothed moving average (10% smoothing), after
+  <a href="https://www.fourmilab.ch/hackdiet/" target="_blank" rel="noopener">John Walker's Hacker's Diet</a>.</p>
+</footer>
+
+<script type="module" src="app.js?v=2"></script>
+</body>
+</html>

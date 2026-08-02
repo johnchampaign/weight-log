@@ -1,0 +1,19 @@
+{
+  "name": "weight-log",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "public"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "weight-log",
+      "database_id": "7ee11aa9-b816-407a-95eb-a907e1bedfcd"
+    }
+  ]
+}
