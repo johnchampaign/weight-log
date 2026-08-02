@@ -18,10 +18,12 @@ deficit/excess.
   trend values.
 - Accounts (email + password), sessions last 180 days.
 - lb/kg preference.
-- CSV export (`Date,Weight,Trend`).
+- Per-day comments (up to 4096 chars); comment-only days are allowed and
+  never move the trend.
+- CSV export (`Date,Weight,Trend,Comment`).
 - CSV import — accepts both this site's export format and the Hacker's Diet
   Online CSV export (`Date,Weight,Rung,Flag,Comment`). Existing dates are
-  overwritten, blank rows skipped. (Comments/flags/rungs are not imported.)
+  overwritten, blank rows skipped. Comments import too (flags/rungs are not).
 
 ## Stack
 

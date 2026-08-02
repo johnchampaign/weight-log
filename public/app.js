@@ -1,4 +1,4 @@
-import { buildTrendSeries, fitSlope, parseDate, toISO } from "./trend.js?v=1";
+import { buildTrendSeries, fitSlope, parseDate, toISO } from "./trend.js?v=2";
 
 const KCAL_PER_UNIT = { lb: 3500, kg: 7700 }; // energy per unit of body weight
 
@@ -193,15 +193,20 @@ function render() {
 
   const dates = monthDates(year, month);
   const trend = buildTrendSeries(state.entries, dates[dates.length - 1]);
-  const weightsByDate = new Map(state.entries.map((e) => [e.date, e.weight]));
+  const weightsByDate = new Map(
+    state.entries.filter((e) => e.weight != null).map((e) => [e.date, e.weight])
+  );
+  const commentsByDate = new Map(
+    state.entries.filter((e) => e.comment).map((e) => [e.date, e.comment])
+  );
   const today = todayISO();
 
-  renderTable(dates, weightsByDate, trend, today);
-  renderChart(dates, weightsByDate, trend, today);
+  renderTable(dates, weightsByDate, commentsByDate, trend, today);
+  renderChart(dates, weightsByDate, commentsByDate, trend, today);
   renderStats(dates, weightsByDate, trend, today);
 }
 
-function renderTable(dates, weightsByDate, trend, today) {
+function renderTable(dates, weightsByDate, commentsByDate, trend, today) {
   const tbody = $("#log-table tbody");
   tbody.textContent = "";
   for (const date of dates) {
@@ -233,11 +238,12 @@ function renderTable(dates, weightsByDate, trend, today) {
     input.inputMode = "decimal";
     input.autocomplete = "off";
     input.dataset.date = date;
+    input.dataset.kind = "w";
     input.value = weight !== undefined ? String(weight) : "";
     input.placeholder = isFuture ? "" : "—";
     input.disabled = isFuture;
     input.setAttribute("aria-label", `Weight for ${date}`);
-    input.addEventListener("change", onWeightChange);
+    input.addEventListener("change", onDayChange);
     input.addEventListener("keydown", onWeightKeydown);
     weightTd.appendChild(input);
 
@@ -253,7 +259,21 @@ function renderTable(dates, weightsByDate, trend, today) {
       varTd.classList.add(v > 0 ? "bad" : "good");
     }
 
-    tr.append(dayNum, dayName, weightTd, trendTd, varTd);
+    const commentTd = document.createElement("td");
+    commentTd.className = "comment";
+    const cInput = document.createElement("input");
+    cInput.type = "text";
+    cInput.autocomplete = "off";
+    cInput.maxLength = 4096;
+    cInput.dataset.date = date;
+    cInput.dataset.kind = "c";
+    cInput.value = commentsByDate.get(date) || "";
+    cInput.disabled = isFuture;
+    cInput.setAttribute("aria-label", `Comment for ${date}`);
+    cInput.addEventListener("change", onDayChange);
+    commentTd.appendChild(cInput);
+
+    tr.append(dayNum, dayName, weightTd, trendTd, varTd, commentTd);
     tbody.appendChild(tr);
   }
 }
@@ -262,7 +282,7 @@ function onWeightKeydown(e) {
   // Enter / arrows move between day fields, like a spreadsheet.
   if (e.key !== "Enter" && e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
   e.preventDefault();
-  const inputs = [...document.querySelectorAll("#log-table input:not(:disabled)")];
+  const inputs = [...document.querySelectorAll('#log-table input[data-kind="w"]:not(:disabled)')];
   const i = inputs.indexOf(e.target);
   const next = e.key === "ArrowUp" ? inputs[i - 1] : inputs[i + 1];
   if (e.key === "Enter" || e.key === "ArrowDown") e.target.dispatchEvent(new Event("change"));
@@ -270,38 +290,43 @@ function onWeightKeydown(e) {
   next?.select();
 }
 
-async function onWeightChange(e) {
+async function onDayChange(e) {
   const input = e.target;
   const date = input.dataset.date;
-  const raw = input.value.trim().replace(",", ".");
+  const wInput = document.querySelector(`#log-table input[data-date="${date}"][data-kind="w"]`);
+  const cInput = document.querySelector(`#log-table input[data-date="${date}"][data-kind="c"]`);
+  const raw = wInput.value.trim().replace(",", ".");
 
   let weight = null;
   if (raw !== "") {
     weight = Number(raw);
     if (!isFinite(weight) || weight <= 0 || weight > 1500) {
-      input.classList.add("save-error");
+      wInput.classList.add("save-error");
       return;
     }
     weight = Math.round(weight * 10) / 10;
   }
+  const comment = cInput.value.trim().slice(0, 4096) || null;
 
   input.classList.remove("save-error");
   input.classList.add("saving");
   try {
-    await api("/api/weight", { method: "PUT", body: JSON.stringify({ date, weight }) });
+    await api("/api/weight", { method: "PUT", body: JSON.stringify({ date, weight, comment }) });
     const i = state.entries.findIndex((en) => en.date === date);
-    if (weight === null) {
+    if (weight === null && comment === null) {
       if (i >= 0) state.entries.splice(i, 1);
     } else if (i >= 0) {
-      state.entries[i].weight = weight;
+      Object.assign(state.entries[i], { weight, comment });
     } else {
-      state.entries.push({ date, weight });
+      state.entries.push({ date, weight, comment });
       state.entries.sort((a, b) => a.date.localeCompare(b.date));
     }
     const active = document.activeElement;
     render();
     if (active?.dataset?.date) {
-      document.querySelector(`#log-table input[data-date="${active.dataset.date}"]`)?.focus();
+      document.querySelector(
+        `#log-table input[data-date="${active.dataset.date}"][data-kind="${active.dataset.kind}"]`
+      )?.focus();
     }
   } catch (err) {
     input.classList.add("save-error");
@@ -313,7 +338,7 @@ async function onWeightChange(e) {
 
 // ---------------------------------------------------------------- chart
 
-function renderChart(dates, weightsByDate, trend, today) {
+function renderChart(dates, weightsByDate, commentsByDate, trend, today) {
   const wrap = $("#chart-wrap");
   const plotDates = dates.filter((d) => d <= today && trend.has(d));
   const logged = dates.filter((d) => weightsByDate.has(d));
@@ -360,8 +385,10 @@ function renderChart(dates, weightsByDate, trend, today) {
   }
   for (const date of logged) {
     const wx = x(date), wy = y(weightsByDate.get(date));
+    const comment = commentsByDate.get(date);
+    const tip = `${date}: ${weightsByDate.get(date)} ${state.unit}` + (comment ? ` — ${comment}` : "");
     marks += `<path d="M ${wx} ${wy - 4.6} L ${wx + 4.6} ${wy} L ${wx} ${wy + 4.6} L ${wx - 4.6} ${wy} Z"
-              fill="#fff" stroke="#4a4437" stroke-width="1.3"/>`;
+              fill="${comment ? "#f6d55c" : "#fff"}" stroke="#4a4437" stroke-width="1.3"><title>${escapeXML(tip)}</title></path>`;
   }
 
   const trendPath = plotDates.map((d, i) => `${i === 0 ? "M" : "L"} ${x(d).toFixed(1)} ${y(trend.get(d)).toFixed(1)}`).join(" ");
@@ -372,6 +399,10 @@ function renderChart(dates, weightsByDate, trend, today) {
       <path d="${trendPath}" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round"/>
       ${marks}
     </svg>`;
+}
+
+function escapeXML(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function roundLabel(v) {

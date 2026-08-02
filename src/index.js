@@ -139,7 +139,7 @@ async function saveSettings(request, env, user) {
 
 async function listWeights(env, user) {
   const { results } = await env.DB.prepare(
-    "SELECT date, weight FROM weights WHERE user_id = ? ORDER BY date"
+    "SELECT date, weight, comment FROM weights WHERE user_id = ? ORDER BY date"
   ).bind(user.id).all();
   return json({ weights: results });
 }
@@ -151,26 +151,36 @@ async function putWeight(request, env, user) {
     return json({ error: "Date must be YYYY-MM-DD" }, 400);
   }
 
-  if (body.weight === null || body.weight === "" || body.weight === 0) {
+  let weight = null;
+  if (body.weight !== null && body.weight !== undefined && body.weight !== "" && body.weight !== 0) {
+    weight = Number(body.weight);
+    if (!isFinite(weight) || weight <= 0 || weight > 1500) {
+      return json({ error: "Weight out of range" }, 400);
+    }
+    weight = Math.round(weight * 10) / 10;
+  }
+
+  let comment = typeof body.comment === "string" ? body.comment.trim() : "";
+  if (comment.length > 4096) return json({ error: "Comment too long (4096 max)" }, 400);
+  comment = comment || null;
+
+  if (weight === null && comment === null) {
     await env.DB.prepare("DELETE FROM weights WHERE user_id = ? AND date = ?").bind(user.id, date).run();
     return json({ ok: true, deleted: true });
   }
 
-  const weight = Number(body.weight);
-  if (!isFinite(weight) || weight <= 0 || weight > 1500) {
-    return json({ error: "Weight out of range" }, 400);
-  }
   await env.DB.prepare(
-    `INSERT INTO weights (user_id, date, weight) VALUES (?, ?, ?)
-     ON CONFLICT(user_id, date) DO UPDATE SET weight = excluded.weight`
-  ).bind(user.id, date, Math.round(weight * 10) / 10).run();
+    `INSERT INTO weights (user_id, date, weight, comment) VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id, date) DO UPDATE SET weight = excluded.weight, comment = excluded.comment`
+  ).bind(user.id, date, weight, comment).run();
   return json({ ok: true });
 }
 
-// Accepts CSV text in either this site's export format (Date,Weight,Trend)
-// or Hacker's Diet Online CSV (Date,Weight,Rung,Flag,Comment with header
-// blocks). Rows are matched on "YYYY-MM-DD,<number>"; existing dates are
-// overwritten, blank-weight rows skipped.
+// Accepts CSV text in either this site's export format
+// (Date,Weight,Trend,Comment) or Hacker's Diet Online CSV
+// (Date,Weight,Rung,Flag,Comment with header blocks). The comment column is
+// located from the header row; rows with neither weight nor comment are
+// skipped, existing dates are overwritten.
 async function importCSV(request, env, user) {
   if (Number(request.headers.get("Content-Length") || 0) > 4_000_000) {
     return json({ error: "File too large" }, 413);
@@ -180,50 +190,93 @@ async function importCSV(request, env, user) {
 
   const rows = [];
   let skipped = 0;
+  let commentCol = null;
   for (const rawLine of body.csv.split("\n")) {
     const line = rawLine.replace(/\r$/, "").trim();
-    const m = line.match(/^(\d{4}-\d{2}-\d{2}),([0-9]*\.?[0-9]+)(,|$)/);
-    if (!m) {
-      if (/^\d{4}-\d{2}-\d{2},/.test(line)) skipped++; // date row with no weight
+    if (!/^\d{4}-\d{2}-\d{2},/.test(line)) {
+      if (/^date,/i.test(line)) {
+        commentCol = line.split(",").findIndex((c) => c.trim().toLowerCase() === "comment");
+        if (commentCol < 0) commentCol = null;
+      }
       continue;
     }
-    const weight = Number(m[2]);
-    if (!isFinite(weight) || weight <= 0 || weight > 1500 || isNaN(Date.parse(m[1]))) {
+    const fields = splitCSVLine(line);
+    const date = fields[0];
+    if (isNaN(Date.parse(date))) {
       skipped++;
       continue;
     }
-    rows.push({ date: m[1], weight });
+    let weight = null;
+    if (fields[1] !== "" && fields[1] !== undefined) {
+      weight = Number(fields[1]);
+      if (!isFinite(weight) || weight <= 0 || weight > 1500) {
+        skipped++;
+        continue;
+      }
+    }
+    const comment = (commentCol !== null && fields[commentCol] ? fields[commentCol].trim().slice(0, 4096) : "") || null;
+    if (weight === null && comment === null) {
+      skipped++;
+      continue;
+    }
+    rows.push({ date, weight, comment });
   }
 
   if (rows.length === 0) {
     return json({ error: "No weight entries found in that file" }, 400);
   }
 
-  // D1 allows 100 bound parameters per statement: 3 per row -> chunks of 30.
-  const CHUNK = 30;
+  // D1 allows 100 bound parameters per statement: 4 per row -> chunks of 25.
+  const CHUNK = 25;
   const statements = [];
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
     const sql =
-      "INSERT INTO weights (user_id, date, weight) VALUES " +
-      chunk.map(() => "(?, ?, ?)").join(", ") +
-      " ON CONFLICT(user_id, date) DO UPDATE SET weight = excluded.weight";
-    statements.push(env.DB.prepare(sql).bind(...chunk.flatMap((r) => [user.id, r.date, r.weight])));
+      "INSERT INTO weights (user_id, date, weight, comment) VALUES " +
+      chunk.map(() => "(?, ?, ?, ?)").join(", ") +
+      " ON CONFLICT(user_id, date) DO UPDATE SET weight = excluded.weight, comment = excluded.comment";
+    statements.push(env.DB.prepare(sql).bind(...chunk.flatMap((r) => [user.id, r.date, r.weight, r.comment])));
   }
   await env.DB.batch(statements);
   return json({ ok: true, imported: rows.length, skipped });
 }
 
+// Minimal CSV field splitter with double-quote handling ("" = literal quote).
+function splitCSVLine(line) {
+  const fields = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; }
+        else inQuotes = false;
+      } else cur += ch;
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      fields.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  fields.push(cur);
+  return fields;
+}
+
 async function exportCSV(env, user) {
   const { results } = await env.DB.prepare(
-    "SELECT date, weight FROM weights WHERE user_id = ? ORDER BY date"
+    "SELECT date, weight, comment FROM weights WHERE user_id = ? ORDER BY date"
   ).bind(user.id).all();
 
-  const lines = [`Date,Weight (${user.unit}),Trend (${user.unit})`];
+  const lines = [`Date,Weight (${user.unit}),Trend (${user.unit}),Comment`];
   if (results.length > 0) {
     const trend = buildTrendSeries(results, results[results.length - 1].date);
-    for (const { date, weight } of results) {
-      lines.push(`${date},${weight},${trend.get(date).toFixed(2)}`);
+    for (const { date, weight, comment } of results) {
+      const t = trend.get(date);
+      lines.push(`${date},${weight ?? ""},${t !== undefined ? t.toFixed(2) : ""},${csvQuote(comment)}`);
     }
   }
   return new Response(lines.join("\r\n") + "\r\n", {
@@ -243,6 +296,11 @@ async function readJSON(request) {
   } catch {
     return null;
   }
+}
+
+function csvQuote(value) {
+  if (value === null || value === undefined || value === "") return "";
+  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 function normalizeEmail(value) {

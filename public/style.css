@@ -261,6 +261,16 @@ main {
 #log-table td.daynum { width: 2.2rem; color: var(--muted); }
 #log-table td.dayname { width: 2.6rem; font-size: 0.8rem; color: var(--muted); }
 
+#log-table td.comment input {
+  width: 100%;
+  min-width: 6rem;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+}
+#log-table td.comment input:hover:not(:disabled),
+#log-table td.comment input:focus { border-color: var(--line); background: #fff; }
+
 #log-table td input {
   width: 6.2rem;
   padding: 0.22rem 0.4rem;
@@ -291,5 +301,8 @@ footer a { color: inherit; }
   main { padding: 0.7rem; }
   #log-table th, #log-table td { padding: 0.3rem 0.45rem; }
   #log-table td input { width: 4.8rem; }
+  #log-table td.comment input { min-width: 4rem; }
+  #log-table td.dayname { display: none; }
+  #log-table th:nth-child(2) { display: none; }
   .month-bar h2 { min-width: 0; flex: 1; }
 }

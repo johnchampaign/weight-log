@@ -6,15 +6,17 @@
 /**
  * Build the day-by-day trend series.
  *
- * @param {Array<{date: string, weight: number}>} entries - logged weights,
- *   dates as "YYYY-MM-DD", ascending order.
+ * @param {Array<{date: string, weight: ?number}>} entries - log rows, dates as
+ *   "YYYY-MM-DD", ascending order. Rows with a null/absent weight
+ *   (comment-only days) are ignored.
  * @param {string} endDate - last date (inclusive) to carry the trend to.
  * @returns {Map<string, number>} date -> trend value, for every day from the
- *   first entry through endDate. Days with a logged weight move the trend by
- *   (weight - trend) / 10; days without leave it unchanged.
+ *   first weighted entry through endDate. Days with a logged weight move the
+ *   trend by (weight - trend) / 10; days without leave it unchanged.
  */
-export function buildTrendSeries(entries, endDate) {
+export function buildTrendSeries(allEntries, endDate) {
   const series = new Map();
+  const entries = allEntries.filter((e) => typeof e.weight === "number" && e.weight > 0);
   if (entries.length === 0) return series;
 
   const byDate = new Map(entries.map((e) => [e.date, e.weight]));
