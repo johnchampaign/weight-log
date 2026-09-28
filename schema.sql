@@ -4,7 +4,14 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
   unit TEXT NOT NULL DEFAULT 'lb',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Diet plan (HDO "Diet Calculator"): weights in the user's unit,
+  -- calorie balance signed (negative = deficit).
+  plan_start_date TEXT,
+  plan_start_weight REAL,
+  plan_goal_weight REAL,
+  plan_calorie_balance INTEGER,
+  plan_show INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS sessions (

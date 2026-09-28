@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Weight Log</title>
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=4">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9878;&#65039;</text></svg>">
 </head>
 <body>
@@ -57,23 +57,85 @@
 
   <!-- Main app -->
   <section id="log-view" hidden>
-    <div class="month-bar">
-      <button type="button" id="prev-month" aria-label="Previous month">&#9664;</button>
-      <h2 id="month-title"></h2>
-      <button type="button" id="next-month" aria-label="Next month">&#9654;</button>
-      <button type="button" id="today-btn">Today</button>
+    <nav class="tabs" role="tablist">
+      <a href="#log" role="tab" data-tab="log">Log</a>
+      <a href="#trend" role="tab" data-tab="trend">Trend</a>
+      <a href="#goal" role="tab" data-tab="goal">Goal</a>
+    </nav>
+
+    <div id="tab-log" role="tabpanel">
+      <div class="month-bar">
+        <button type="button" id="prev-month" aria-label="Previous month">&#9664;</button>
+        <h2 id="month-title"></h2>
+        <button type="button" id="next-month" aria-label="Next month">&#9654;</button>
+        <button type="button" id="today-btn">Today</button>
+      </div>
+
+      <div id="chart-wrap"></div>
+
+      <div id="stats" class="stats"></div>
+
+      <table id="log-table">
+        <thead>
+          <tr><th>Day</th><th></th><th class="num">Weight</th><th class="num">Trend</th><th class="num">Var</th><th>Comment</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
     </div>
 
-    <div id="chart-wrap"></div>
+    <div id="tab-trend" role="tabpanel" hidden>
+      <div class="panel">
+        <h2>Trend analysis</h2>
+        <p id="trend-empty" class="muted" hidden>You need at least a week of weigh-ins to compute a trend.</p>
+        <div class="table-scroll">
+          <table id="trend-table" class="data-table">
+            <thead>
+              <tr><th colspan="6" id="trend-ending" class="caption-row"></th></tr>
+              <tr>
+                <th rowspan="2">Last…</th>
+                <th rowspan="2" class="num"><span class="bad">Gain</span>/<span class="good">Loss</span><br><span id="trend-unit-w"></span>/week</th>
+                <th rowspan="2" class="num"><span class="bad">Excess</span>/<span class="good">Deficit</span><br>kcal/day</th>
+                <th colspan="3" class="num center">Weight trend</th>
+              </tr>
+              <tr><th class="num">Min</th><th class="num">Mean</th><th class="num">Max</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
 
-    <div id="stats" class="stats"></div>
+        <form id="custom-range" class="inline-form">
+          <strong>Custom period</strong>
+          <label>From <input type="date" id="range-from" required></label>
+          <label>To <input type="date" id="range-to" required></label>
+          <button type="submit">Analyse</button>
+          <button type="button" id="range-clear" hidden>Clear</button>
+        </form>
+        <p class="muted small">Rates are a least-squares fit to the daily trend over each period, as in
+        Hacker's Diet Online. Periods end on your most recent weigh-in.</p>
+      </div>
+    </div>
 
-    <table id="log-table">
-      <thead>
-        <tr><th>Day</th><th></th><th class="num">Weight</th><th class="num">Trend</th><th class="num">Var</th><th>Comment</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div id="tab-goal" role="tabpanel" hidden>
+      <div class="panel">
+        <h2>Diet plan</h2>
+        <p class="muted small">Set a goal and a daily calorie deficit. The plan appears on the Log chart as a
+        dashed yellow line, then stays flat at your goal weight once the plan's end date passes, so you can
+        compare your actual trend against it.</p>
+        <form id="plan-form" class="plan-form">
+          <label>Start date <input type="date" id="plan-start-date" required></label>
+          <label>Start weight (<span class="unit-label"></span>) <input type="text" inputmode="decimal" id="plan-start-weight" required></label>
+          <label>Goal weight (<span class="unit-label"></span>) <input type="text" inputmode="decimal" id="plan-goal-weight" required></label>
+          <label>Daily calorie deficit (or excess, to gain) <input type="number" id="plan-balance" min="1" max="5000" step="1" value="500" required></label>
+          <label class="check"><input type="checkbox" id="plan-show" checked> Show the plan on the Log chart</label>
+          <div class="plan-summary" id="plan-summary"></div>
+          <div class="form-buttons">
+            <button type="submit" class="primary">Save plan</button>
+            <button type="button" id="plan-remove" hidden>Remove plan</button>
+            <span id="plan-status" class="muted small" role="status"></span>
+          </div>
+        </form>
+      </div>
+    </div>
   </section>
 
 </main>
@@ -83,6 +145,6 @@
   <a href="https://www.fourmilab.ch/hackdiet/" target="_blank" rel="noopener">John Walker's Hacker's Diet</a>.</p>
 </footer>
 
-<script type="module" src="app.js?v=3"></script>
+<script type="module" src="app.js?v=4"></script>
 </body>
 </html>

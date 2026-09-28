@@ -3,6 +3,7 @@
 
 import { buildTrendSeries } from "../public/trend.js";
 
+const KG_TO_LB = 2.2046226218;
 const PBKDF2_ITERATIONS = 100000;
 const SESSION_DAYS = 180;
 const COOKIE = "session";
@@ -42,9 +43,10 @@ async function route(request, env, url) {
   if (!user) return json({ error: "Not signed in" }, 401);
 
   if (path === "/api/me" && method === "GET") {
-    return json({ email: user.email, unit: user.unit });
+    return json({ email: user.email, unit: user.unit, plan: planOf(user) });
   }
   if (path === "/api/settings" && method === "POST") return saveSettings(request, env, user);
+  if (path === "/api/plan" && method === "PUT") return savePlan(request, env, user);
   if (path === "/api/weights" && method === "GET") return listWeights(env, user);
   if (path === "/api/weight" && method === "PUT") return putWeight(request, env, user);
   if (path === "/api/import" && method === "POST") return importCSV(request, env, user);
@@ -121,7 +123,9 @@ async function authenticate(request, env) {
   const token = getCookie(request, COOKIE);
   if (!token) return null;
   const row = await env.DB.prepare(
-    `SELECT u.id, u.email, u.unit FROM sessions s JOIN users u ON u.id = s.user_id
+    `SELECT u.id, u.email, u.unit, u.plan_start_date, u.plan_start_weight, u.plan_goal_weight,
+            u.plan_calorie_balance, u.plan_show
+     FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > ?`
   ).bind(await sha256Hex(token), Date.now()).first();
   return row ?? null;
@@ -135,6 +139,61 @@ async function saveSettings(request, env, user) {
   if (!unit) return json({ error: "Unit must be lb or kg" }, 400);
   await env.DB.prepare("UPDATE users SET unit = ? WHERE id = ?").bind(unit, user.id).run();
   return json({ ok: true, unit });
+}
+
+function planOf(user) {
+  if (!user.plan_start_date) return null;
+  return {
+    startDate: user.plan_start_date,
+    startWeight: user.plan_start_weight,
+    goalWeight: user.plan_goal_weight,
+    calorieBalance: user.plan_calorie_balance,
+    show: !!user.plan_show,
+  };
+}
+
+async function savePlan(request, env, user) {
+  const body = await readJSON(request);
+  if (body?.plan === null) {
+    await env.DB.prepare(
+      `UPDATE users SET plan_start_date = NULL, plan_start_weight = NULL, plan_goal_weight = NULL,
+       plan_calorie_balance = NULL WHERE id = ?`
+    ).bind(user.id).run();
+    return json({ ok: true, plan: null });
+  }
+  const p = validatePlan(body?.plan);
+  if (typeof p === "string") return json({ error: p }, 400);
+  await env.DB.prepare(
+    `UPDATE users SET plan_start_date = ?, plan_start_weight = ?, plan_goal_weight = ?,
+     plan_calorie_balance = ?, plan_show = ? WHERE id = ?`
+  ).bind(p.startDate, p.startWeight, p.goalWeight, p.calorieBalance, p.show ? 1 : 0, user.id).run();
+  return json({ ok: true, plan: p });
+}
+
+// Returns a normalized plan or an error message string. The balance's sign
+// is derived from the direction of travel (goal below start = deficit).
+function validatePlan(plan) {
+  if (!plan || typeof plan !== "object") return "Missing plan";
+  const startDate = typeof plan.startDate === "string" ? plan.startDate : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || isNaN(Date.parse(startDate))) {
+    return "Start date must be YYYY-MM-DD";
+  }
+  const startWeight = Math.round(Number(plan.startWeight) * 10) / 10;
+  const goalWeight = Math.round(Number(plan.goalWeight) * 10) / 10;
+  for (const w of [startWeight, goalWeight]) {
+    if (!isFinite(w) || w <= 0 || w > 1500) return "Weights must be between 0 and 1500";
+  }
+  const magnitude = Math.round(Math.abs(Number(plan.calorieBalance)));
+  if (!isFinite(magnitude) || magnitude < 1 || magnitude > 5000) {
+    return "Daily calorie deficit/excess must be between 1 and 5000";
+  }
+  return {
+    startDate,
+    startWeight,
+    goalWeight,
+    calorieBalance: goalWeight < startWeight ? -magnitude : magnitude,
+    show: plan.show !== false,
+  };
 }
 
 async function listWeights(env, user) {
@@ -191,10 +250,20 @@ async function importCSV(request, env, user) {
   const rows = [];
   let skipped = 0;
   let commentCol = null;
+  let plan = null;
+  // HDO starts each month with "StartTrend,<carry>,<log unit>,...", where the
+  // unit is 0 = kg, 1 = lb, 2 = stone (stone months are stored in lb). Months
+  // logged in a different unit than this account are converted.
+  let monthUnit = null;
   for (const rawLine of body.csv.split("\n")) {
     const line = rawLine.replace(/\r$/, "").trim();
     if (!/^\d{4}-\d{2}-\d{2},/.test(line)) {
-      if (/^date,/i.test(line)) {
+      if (/^StartTrend,/.test(line)) {
+        const u = splitCSVLine(line)[2];
+        monthUnit = u === "0" ? "kg" : u === "1" || u === "2" ? "lb" : null;
+      } else if (/^Diet-Plan,/.test(line)) {
+        plan = parseHDOPlan(splitCSVLine(line), user.unit);
+      } else if (/^date,/i.test(line)) {
         commentCol = line.split(",").findIndex((c) => c.trim().toLowerCase() === "comment");
         if (commentCol < 0) commentCol = null;
       }
@@ -209,6 +278,9 @@ async function importCSV(request, env, user) {
     let weight = null;
     if (fields[1] !== "" && fields[1] !== undefined) {
       weight = Number(fields[1]);
+      if (monthUnit && monthUnit !== user.unit) {
+        weight = Math.round(weight * (monthUnit === "kg" ? KG_TO_LB : 1 / KG_TO_LB) * 10) / 10;
+      }
       if (!isFinite(weight) || weight <= 0 || weight > 1500) {
         skipped++;
         continue;
@@ -237,8 +309,29 @@ async function importCSV(request, env, user) {
       " ON CONFLICT(user_id, date) DO UPDATE SET weight = excluded.weight, comment = excluded.comment";
     statements.push(env.DB.prepare(sql).bind(...chunk.flatMap((r) => [user.id, r.date, r.weight, r.comment])));
   }
+  if (plan) {
+    statements.push(env.DB.prepare(
+      `UPDATE users SET plan_start_date = ?, plan_start_weight = ?, plan_goal_weight = ?,
+       plan_calorie_balance = ?, plan_show = ? WHERE id = ?`
+    ).bind(plan.startDate, plan.startWeight, plan.goalWeight, plan.calorieBalance, plan.show ? 1 : 0, user.id));
+  }
   await env.DB.batch(statements);
-  return json({ ok: true, imported: rows.length, skipped });
+  return json({ ok: true, imported: rows.length, skipped, plan: !!plan });
+}
+
+// HDO: Diet-Plan,1.0,<calorie balance>,<start kg>,<goal kg>,<start ISO time>,<plot 0/1>
+// HDO stores plan weights in kilograms regardless of display unit.
+function parseHDOPlan(fields, unit) {
+  const [, , balance, startKg, goalKg, startTime, plot] = fields;
+  const factor = unit === "kg" ? 1 : KG_TO_LB;
+  const p = validatePlan({
+    startDate: typeof startTime === "string" ? startTime.slice(0, 10) : "",
+    startWeight: Number(startKg) * factor,
+    goalWeight: Number(goalKg) * factor,
+    calorieBalance: Number(balance),
+    show: plot === "1",
+  });
+  return typeof p === "string" ? null : p;
 }
 
 // Minimal CSV field splitter with double-quote handling ("" = literal quote).

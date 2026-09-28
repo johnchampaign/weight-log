@@ -1,12 +1,15 @@
-import { buildTrendSeries, fitSlope, parseDate, toISO } from "./trend.js?v=2";
-
-const KCAL_PER_UNIT = { lb: 3500, kg: 7700 }; // energy per unit of body weight
+import {
+  buildTrendSeries, fitSlope, parseDate, toISO,
+  KCAL_PER_UNIT, planWeightOn, planEndDate, analyseTrend, intervalStart,
+} from "./trend.js?v=3";
 
 const state = {
   email: null,
   unit: "lb",
-  entries: [],        // [{date, weight}] ascending
+  entries: [],        // [{date, weight, comment}] ascending
   view: null,         // {year, month} month is 0-based
+  plan: null,         // {startDate, startWeight, goalWeight, calorieBalance, show}
+  customRange: null,  // {from, to} for the Trend tab
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -33,8 +36,7 @@ async function boot() {
   const now = new Date();
   state.view = { year: now.getFullYear(), month: now.getMonth() };
   try {
-    const me = await api("/api/me");
-    await enterApp(me);
+    await enterApp();
   } catch {
     showAuth();
   }
@@ -47,16 +49,22 @@ function showAuth() {
   $("#auth-email").focus();
 }
 
-async function enterApp(me) {
+async function enterApp() {
+  const [me, { weights }] = await Promise.all([api("/api/me"), api("/api/weights")]);
   state.email = me.email;
   state.unit = me.unit;
-  const { weights } = await api("/api/weights");
+  state.plan = me.plan;
   state.entries = weights;
+  state.customRange = null;
+  $("#range-from").value = "";
+  $("#range-to").value = "";
   $("#auth-view").hidden = true;
   $("#log-view").hidden = false;
   $("#user-nav").hidden = false;
   $("#nav-email").textContent = me.email;
   renderUnitToggle();
+  showTab();
+  fillPlanForm();
   render();
 }
 
@@ -83,7 +91,7 @@ $("#auth-form").addEventListener("submit", async (e) => {
   btn.disabled = true;
   $("#auth-error").hidden = true;
   try {
-    const me = await api(`/api/${authMode === "login" ? "login" : "register"}`, {
+    await api(`/api/${authMode === "login" ? "login" : "register"}`, {
       method: "POST",
       body: JSON.stringify({
         email: $("#auth-email").value,
@@ -92,7 +100,7 @@ $("#auth-form").addEventListener("submit", async (e) => {
       }),
     });
     $("#auth-password").value = "";
-    await enterApp(me);
+    await enterApp();
   } catch (err) {
     const el = $("#auth-error");
     el.textContent = err.message;
@@ -106,6 +114,7 @@ $("#logout-btn").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" }).catch(() => {});
   state.email = null;
   state.entries = [];
+  state.plan = null;
   showAuth();
 });
 
@@ -123,10 +132,12 @@ $("#import-file").addEventListener("change", async (e) => {
   try {
     const csv = await file.text();
     const result = await api("/api/import", { method: "POST", body: JSON.stringify({ csv }) });
-    const { weights } = await api("/api/weights");
-    state.entries = weights;
-    render();
-    alert(`Imported ${result.imported} entries` + (result.skipped ? ` (${result.skipped} rows without a weight skipped)` : "") + ".");
+    await enterApp();
+    alert(
+      `Imported ${result.imported} entries` +
+      (result.skipped ? ` (${result.skipped} empty rows skipped)` : "") +
+      (result.plan ? ", plus your diet plan (see the Goal tab)" : "") + "."
+    );
   } catch (err) {
     alert(`Import failed: ${err.message}`);
   } finally {
@@ -141,7 +152,26 @@ function renderUnitToggle() {
   for (const btn of document.querySelectorAll("#unit-toggle button")) {
     btn.classList.toggle("active", btn.dataset.unit === state.unit);
   }
+  for (const el of document.querySelectorAll(".unit-label")) el.textContent = state.unit;
+  $("#trend-unit-w").textContent = state.unit;
 }
+
+// ---------------------------------------------------------------- tabs
+
+const TABS = ["log", "trend", "goal"];
+
+function showTab() {
+  const name = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
+  for (const t of TABS) {
+    $(`#tab-${t}`).hidden = t !== name;
+    const link = document.querySelector(`.tabs a[data-tab="${t}"]`);
+    link.classList.toggle("active", t === name);
+    link.setAttribute("aria-selected", String(t === name));
+  }
+  if (name === "goal") updatePlanSummary();
+}
+
+window.addEventListener("hashchange", showTab);
 
 $("#unit-toggle").addEventListener("click", async (e) => {
   const unit = e.target.dataset?.unit;
@@ -204,6 +234,7 @@ function render() {
   renderTable(dates, weightsByDate, commentsByDate, trend, today);
   renderChart(dates, weightsByDate, commentsByDate, trend, today);
   renderStats(dates, weightsByDate, trend, today);
+  renderTrendTab();
 }
 
 function renderTable(dates, weightsByDate, commentsByDate, trend, today) {
@@ -351,9 +382,18 @@ function renderChart(dates, weightsByDate, commentsByDate, trend, today) {
   const W = 840, H = 300, L = 46, R = 14, T = 14, B = 26;
   const n = dates.length;
 
+  const planPoints = [];
+  if (state.plan?.show) {
+    for (const d of dates) {
+      const pw = planWeightOn(state.plan, d, state.unit);
+      if (pw !== null) planPoints.push([d, pw]);
+    }
+  }
+
   const values = [];
   for (const d of plotDates) values.push(trend.get(d));
   for (const d of logged) values.push(weightsByDate.get(d));
+  for (const [, pw] of planPoints) values.push(pw);
   let lo = Math.min(...values), hi = Math.max(...values);
   const pad = Math.max((hi - lo) * 0.15, 1);
   lo -= pad; hi += pad;
@@ -393,9 +433,19 @@ function renderChart(dates, weightsByDate, commentsByDate, trend, today) {
 
   const trendPath = plotDates.map((d, i) => `${i === 0 ? "M" : "L"} ${x(d).toFixed(1)} ${y(trend.get(d)).toFixed(1)}`).join(" ");
 
+  let planLine = "";
+  if (planPoints.length > 0) {
+    const pts = planPoints.length === 1 ? [planPoints[0], planPoints[0]] : planPoints;
+    const d = pts.map(([date, pw], i) => `${i === 0 ? "M" : "L"} ${x(date).toFixed(1)} ${y(pw).toFixed(1)}`).join(" ");
+    const [lastDate, lastPw] = planPoints[planPoints.length - 1];
+    planLine = `<path d="${d}" fill="none" stroke="var(--plan)" stroke-width="2" stroke-dasharray="7 5">
+                  <title>Diet plan: ${lastPw.toFixed(1)} ${state.unit} on ${lastDate}</title></path>`;
+  }
+
   wrap.innerHTML = `
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Weight and trend chart">
       ${grid}${xlabels}
+      ${planLine}
       <path d="${trendPath}" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round"/>
       ${marks}
     </svg>`;
@@ -450,5 +500,229 @@ function statCell(label, value, signedForColor = 0) {
   const cls = signedForColor < -1e-9 ? "good" : signedForColor > 1e-9 ? "bad" : "";
   return `<div class="stat"><div class="label">${label}</div><div class="value ${cls}">${value}</div></div>`;
 }
+
+// ---------------------------------------------------------------- trend tab
+
+// HDO's standard periods: positive = days back, negative = calendar months back.
+const PERIODS = [[7, "Week"], [14, "Fortnight"], [-1, "Month"], [-3, "Quarter"], [-6, "Six months"], [-12, "Year"]];
+
+function weighedEntries() {
+  return state.entries.filter((e) => typeof e.weight === "number" && e.weight > 0);
+}
+
+function renderTrendTab() {
+  const weighed = weighedEntries();
+  const tbody = $("#trend-table tbody");
+  tbody.textContent = "";
+
+  const first = weighed[0]?.date;
+  const last = weighed[weighed.length - 1]?.date;
+
+  const rangeFrom = $("#range-from"), rangeTo = $("#range-to");
+  if (first) {
+    rangeFrom.min = rangeTo.min = first;
+    rangeFrom.max = rangeTo.max = last;
+    if (!rangeFrom.value) rangeFrom.value = first;
+    if (!rangeTo.value) rangeTo.value = last;
+  }
+
+  const rows = [];
+  if (first) {
+    for (const [n, name] of PERIODS) {
+      const start = intervalStart(last, n);
+      if (start < first) break;
+      rows.push({ name, from: start, to: last });
+    }
+  }
+
+  let custom = null;
+  if (first && state.customRange) {
+    let { from, to } = state.customRange;
+    if (from < first || from > last) from = first;
+    if (to < first || to > last) to = last;
+    if (to < from) [from, to] = [to, from];
+    if (from !== to) custom = { name: durationLabel(from, to), from, to, custom: true };
+  }
+
+  const all = custom ? [...rows, custom] : rows;
+  $("#trend-empty").hidden = all.length > 0;
+  $("#trend-table").hidden = all.length === 0;
+  $("#range-clear").hidden = !state.customRange;
+  if (all.length === 0) return;
+
+  $("#trend-ending").textContent = rows.length
+    ? `Periods ending ${formatDate(last)} (your most recent weigh-in)`
+    : "Custom period";
+
+  const trend = buildTrendSeries(weighed, last);
+  const results = analyseTrend(trend, all.map((r) => [r.from, r.to]));
+
+  all.forEach((row, i) => {
+    const r = results[i];
+    if (row.custom && rows.length) {
+      const cap = document.createElement("tr");
+      cap.innerHTML = `<th colspan="6" class="caption-row">${formatDate(row.from)} – ${formatDate(row.to)}</th>`;
+      tbody.appendChild(cap);
+    }
+    const tr = document.createElement("tr");
+    if (!r || r.slope === null) {
+      tr.innerHTML = `<td>${row.name}</td><td class="num" colspan="5">Not enough data</td>`;
+    } else {
+      const weekly = r.slope * 7;
+      const kcal = r.slope * KCAL_PER_UNIT[state.unit];
+      tr.innerHTML =
+        `<td>${row.name}</td>` +
+        `<td class="num ${signClass(weekly, 2)}">${signed(weekly, 2)}</td>` +
+        `<td class="num ${signClass(kcal, 0)}">${signed(kcal, 0)}</td>` +
+        `<td class="num">${r.min.toFixed(1)}</td>` +
+        `<td class="num">${r.mean.toFixed(1)}</td>` +
+        `<td class="num">${r.max.toFixed(1)}</td>`;
+    }
+    tbody.appendChild(tr);
+  });
+}
+
+// Signed figure as HDO prints it: "+0.49", "−0.49", and "0.00" with no sign
+// or colour when it rounds to zero.
+function signed(v, digits) {
+  const s = Math.abs(v).toFixed(digits);
+  if (Number(s) === 0) return s;
+  return (v > 0 ? "+" : "−") + s;
+}
+
+function signClass(v, digits) {
+  if (Number(Math.abs(v).toFixed(digits)) === 0) return "";
+  return v > 0 ? "bad" : "good";
+}
+
+// "1 y 2 m 5 d", counting whole calendar months back from `to`, like HDO.
+function durationLabel(from, to) {
+  let months = 0;
+  while (intervalStart(to, -(months + 1)) >= from) months++;
+  const monthStart = months ? intervalStart(to, -months) : to;
+  const days = Math.round((parseDate(monthStart) - parseDate(from)) / 86400000);
+  const y = Math.floor(months / 12), m = months % 12;
+  return [y && `${y} y`, m && `${m} m`, days && `${days} d`].filter(Boolean).join(" ");
+}
+
+function formatDate(iso) {
+  const d = parseDate(iso);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()].slice(0, 3)} ${d.getUTCFullYear()}`;
+}
+
+$("#custom-range").addEventListener("submit", (e) => {
+  e.preventDefault();
+  state.customRange = { from: $("#range-from").value, to: $("#range-to").value };
+  renderTrendTab();
+});
+
+$("#range-clear").addEventListener("click", () => {
+  state.customRange = null;
+  $("#range-from").value = "";
+  $("#range-to").value = "";
+  renderTrendTab();
+});
+
+// ---------------------------------------------------------------- goal tab
+
+function latestTrend() {
+  const weighed = weighedEntries();
+  if (weighed.length === 0) return null;
+  const last = weighed[weighed.length - 1].date;
+  return { date: last, value: buildTrendSeries(weighed, last).get(last) };
+}
+
+function fillPlanForm() {
+  const p = state.plan;
+  const lt = latestTrend();
+  $("#plan-start-date").value = p ? p.startDate : todayISO();
+  $("#plan-start-weight").value = p ? String(p.startWeight) : lt ? lt.value.toFixed(1) : "";
+  $("#plan-goal-weight").value = p ? String(p.goalWeight) : "";
+  $("#plan-balance").value = p ? String(Math.abs(p.calorieBalance)) : "500";
+  $("#plan-show").checked = p ? p.show : true;
+  $("#plan-remove").hidden = !p;
+  $("#plan-status").textContent = "";
+  updatePlanSummary();
+}
+
+function readPlanForm() {
+  const plan = {
+    startDate: $("#plan-start-date").value,
+    startWeight: Number($("#plan-start-weight").value.trim().replace(",", ".")),
+    goalWeight: Number($("#plan-goal-weight").value.trim().replace(",", ".")),
+    calorieBalance: Number($("#plan-balance").value),
+    show: $("#plan-show").checked,
+  };
+  const ok = plan.startDate && plan.startWeight > 0 && plan.goalWeight > 0 && plan.calorieBalance > 0;
+  if (ok && plan.goalWeight < plan.startWeight) plan.calorieBalance = -plan.calorieBalance;
+  return ok ? plan : null;
+}
+
+function updatePlanSummary() {
+  const el = $("#plan-summary");
+  const plan = readPlanForm();
+  if (!plan) {
+    el.textContent = "Enter a start weight, goal weight and daily calorie figure to see your projection.";
+    return;
+  }
+  const unit = state.unit;
+  const weekly = (Math.abs(plan.calorieBalance) * 7) / KCAL_PER_UNIT[unit];
+  const losing = plan.goalWeight < plan.startWeight;
+  const end = planEndDate(plan, unit);
+  const weeks = Math.round((parseDate(end) - parseDate(plan.startDate)) / (7 * 86400000));
+
+  let html = plan.goalWeight === plan.startWeight
+    ? `Your goal equals your start weight: the plan is a flat line at ${plan.goalWeight.toFixed(1)} ${unit}.`
+    : `A ${Math.abs(plan.calorieBalance)} kcal/day ${losing ? "deficit" : "excess"} means
+       ${losing ? "losing" : "gaining"} <strong>${weekly.toFixed(2)} ${unit}/week</strong>, reaching
+       ${plan.goalWeight.toFixed(1)} ${unit} around <strong>${formatDate(end)}</strong>
+       (about ${weeks} week${weeks === 1 ? "" : "s"}).`;
+
+  const lt = latestTrend();
+  if (lt && lt.date >= plan.startDate) {
+    const target = planWeightOn(plan, lt.date, unit);
+    const diff = lt.value - target;
+    const ahead = losing ? diff <= 0 : diff >= 0;
+    html += `<br>On ${formatDate(lt.date)} the plan called for ${target.toFixed(1)} ${unit}; your trend was
+      ${lt.value.toFixed(1)} ${unit}, <span class="${ahead ? "good" : "bad"}">${Math.abs(diff).toFixed(1)} ${unit}
+      ${diff > 0 ? "above" : "below"} plan</span>.`;
+  }
+  el.innerHTML = html;
+}
+
+$("#plan-form").addEventListener("input", updatePlanSummary);
+
+$("#plan-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const plan = readPlanForm();
+  const status = $("#plan-status");
+  if (!plan) {
+    status.textContent = "Please fill in every field with a positive number.";
+    return;
+  }
+  try {
+    const res = await api("/api/plan", { method: "PUT", body: JSON.stringify({ plan }) });
+    state.plan = res.plan;
+    fillPlanForm();
+    render();
+    status.textContent = "Saved.";
+  } catch (err) {
+    status.textContent = err.message;
+    if (err.status === 401) showAuth();
+  }
+});
+
+$("#plan-remove").addEventListener("click", async () => {
+  if (!confirm("Remove your diet plan? Your weight log is not affected.")) return;
+  try {
+    await api("/api/plan", { method: "PUT", body: JSON.stringify({ plan: null }) });
+    state.plan = null;
+    fillPlanForm();
+    render();
+    $("#plan-status").textContent = "Plan removed.";
+  } catch (err) {
+    $("#plan-status").textContent = err.message;
+  }
+});
 
 boot();

@@ -20,10 +20,19 @@ deficit/excess.
 - lb/kg preference.
 - Per-day comments (up to 4096 chars); comment-only days are allowed and
   never move the trend.
+- **Trend tab** — HDO's Trend Analysis: gain/loss per week, calorie
+  excess/deficit, and min/mean/max trend over the last week, fortnight,
+  month, quarter, six months and year (ending on the latest weigh-in), plus
+  any custom period. Same interval rules as HDO (`history::analyseTrend`).
+- **Goal tab** — HDO's diet calculator: start date/weight, goal weight and
+  daily calorie deficit. When enabled, the plan is drawn on the month chart
+  as a dashed yellow line, flat at the goal weight after the plan ends.
 - CSV export (`Date,Weight,Trend,Comment`).
 - CSV import — accepts both this site's export format and the Hacker's Diet
   Online CSV export (`Date,Weight,Rung,Flag,Comment`). Existing dates are
-  overwritten, blank rows skipped. Comments import too (flags/rungs are not).
+  overwritten, blank rows skipped. Comments and the diet plan import too
+  (flags/rungs do not). HDO months logged in a different unit than the
+  account (per-month `StartTrend` unit field) are converted.
 
 ## Stack
 
@@ -45,8 +54,10 @@ npx wrangler dev        # local, uses a local D1 copy
 npx wrangler deploy
 ```
 
-Schema changes: edit [schema.sql](schema.sql) (idempotent) and run
+Schema: [schema.sql](schema.sql) is the full schema for a fresh database.
+Changes to the live database go in [migrations/](migrations/) and are
+applied once, in order:
 
 ```bash
-npx wrangler d1 execute weight-log --remote --file schema.sql -y
+npx wrangler d1 execute weight-log --remote --file migrations/002-diet-plan.sql -y
 ```
