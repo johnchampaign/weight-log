@@ -707,7 +707,7 @@ function fillPlanForm() {
   $("#plan-start-weight").value = p ? String(p.startWeight) : lt ? lt.value.toFixed(1) : "";
   $("#plan-goal-weight").value = p ? String(p.goalWeight) : "";
   $("#plan-balance").value = p ? String(Math.abs(p.calorieBalance)) : "500";
-  $("#plan-show").checked = p ? p.show : true;
+  $("#plan-show").checked = p ? p.show : false;
   $("#plan-remove").hidden = !p;
   $("#plan-status").textContent = "";
   updatePlanSummary();

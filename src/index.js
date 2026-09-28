@@ -206,7 +206,7 @@ function validatePlan(plan) {
     startWeight,
     goalWeight,
     calorieBalance: goalWeight < startWeight ? -magnitude : magnitude,
-    show: plan.show !== false,
+    show: plan.show === true,
   };
 }
 

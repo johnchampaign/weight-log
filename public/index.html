@@ -134,15 +134,15 @@
 
       <div class="panel">
         <h2>Diet plan</h2>
-        <p class="muted small">Set a goal and a daily calorie deficit. The plan appears on the Log chart as a
-        dashed yellow line, then stays flat at your goal weight once the plan's end date passes, so you can
-        compare your actual trend against it.</p>
+        <p class="muted small">Set a goal and a daily calorie deficit. Tick "Show the plan" to draw it on the
+        Log chart as a dashed yellow line, which stays flat at your goal weight once the plan's end date
+        passes, so you can compare your actual trend against it.</p>
         <form id="plan-form" class="plan-form">
           <label>Start date <input type="date" id="plan-start-date" required></label>
           <label>Start weight (<span class="unit-label"></span>) <input type="text" inputmode="decimal" id="plan-start-weight" required></label>
           <label>Goal weight (<span class="unit-label"></span>) <input type="text" inputmode="decimal" id="plan-goal-weight" required></label>
           <label>Daily calorie deficit (or excess, to gain) <input type="number" id="plan-balance" min="1" max="5000" step="1" value="500" required></label>
-          <label class="check"><input type="checkbox" id="plan-show" checked> Show the plan on the Log chart</label>
+          <label class="check"><input type="checkbox" id="plan-show"> Show the plan on the Log chart</label>
           <div class="plan-summary" id="plan-summary"></div>
           <div class="form-buttons">
             <button type="submit" class="primary">Save plan</button>
@@ -161,6 +161,6 @@
   <a href="https://www.fourmilab.ch/hackdiet/" target="_blank" rel="noopener">John Walker's Hacker's Diet</a>.</p>
 </footer>
 
-<script type="module" src="app.js?v=5"></script>
+<script type="module" src="app.js?v=6"></script>
 </body>
 </html>
