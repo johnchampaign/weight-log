@@ -27,6 +27,10 @@ deficit/excess.
 - **Goal tab** — HDO's diet calculator: start date/weight, goal weight and
   daily calorie deficit. When enabled, the plan is drawn on the month chart
   as a dashed yellow line, flat at the goal weight after the plan ends.
+- **Body mass index** — set a height (cm, or feet and inches) on the Goal
+  tab and the Log tab shows BMI as HDO did (`monthlog::bodyMassIndex`): from
+  the trend on the month's last weigh-in, plus the mean trend over the days
+  weighed that month. No height, no BMI.
 - CSV export (`Date,Weight,Trend,Comment`).
 - CSV import — accepts both this site's export format and the Hacker's Diet
   Online CSV export (`Date,Weight,Rung,Flag,Comment`). Existing dates are
@@ -59,5 +63,5 @@ Changes to the live database go in [migrations/](migrations/) and are
 applied once, in order:
 
 ```bash
-npx wrangler d1 execute weight-log --remote --file migrations/002-diet-plan.sql -y
+npx wrangler d1 execute weight-log --remote --file migrations/003-height.sql -y
 ```

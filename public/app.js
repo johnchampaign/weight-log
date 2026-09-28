@@ -1,7 +1,7 @@
 import {
   buildTrendSeries, fitSlope, parseDate, toISO,
-  KCAL_PER_UNIT, planWeightOn, planEndDate, analyseTrend, intervalStart,
-} from "./trend.js?v=3";
+  KCAL_PER_UNIT, planWeightOn, planEndDate, analyseTrend, intervalStart, bodyMassIndex,
+} from "./trend.js?v=4";
 
 const state = {
   email: null,
@@ -10,6 +10,7 @@ const state = {
   view: null,         // {year, month} month is 0-based
   plan: null,         // {startDate, startWeight, goalWeight, calorieBalance, show}
   customRange: null,  // {from, to} for the Trend tab
+  heightCm: null,     // for BMI; null = not set
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -54,6 +55,7 @@ async function enterApp() {
   state.email = me.email;
   state.unit = me.unit;
   state.plan = me.plan;
+  state.heightCm = me.heightCm ?? null;
   state.entries = weights;
   state.customRange = null;
   $("#range-from").value = "";
@@ -64,6 +66,7 @@ async function enterApp() {
   $("#nav-email").textContent = me.email;
   renderUnitToggle();
   showTab();
+  fillHeightForm();
   fillPlanForm();
   render();
 }
@@ -115,6 +118,7 @@ $("#logout-btn").addEventListener("click", async () => {
   state.email = null;
   state.entries = [];
   state.plan = null;
+  state.heightCm = null;
   showAuth();
 });
 
@@ -493,13 +497,77 @@ function renderStats(dates, weightsByDate, trend, today) {
       kcal
     );
   }
+
+  // HDiet::monthlog::bodyMassIndex: trend on the month's last weigh-in, and
+  // the mean of the trend over the days weighed that month.
+  if (state.heightCm) {
+    const weighedTrend = dates.filter((d) => weightsByDate.has(d)).map((d) => trend.get(d));
+    const meanTrend = weighedTrend.reduce((a, b) => a + b, 0) / weighedTrend.length;
+    const recent = bodyMassIndex(endTrend, unit, state.heightCm);
+    const mean = bodyMassIndex(meanTrend, unit, state.heightCm);
+    cells += statCell("Body mass index", recent.toFixed(1), 0, `month mean ${mean.toFixed(1)}`);
+  }
   el.innerHTML = cells;
 }
 
-function statCell(label, value, signedForColor = 0) {
+function statCell(label, value, signedForColor = 0, sub = "") {
   const cls = signedForColor < -1e-9 ? "good" : signedForColor > 1e-9 ? "bad" : "";
-  return `<div class="stat"><div class="label">${label}</div><div class="value ${cls}">${value}</div></div>`;
+  return `<div class="stat"><div class="label">${label}</div><div class="value ${cls}">${value}</div>` +
+    (sub ? `<div class="sub">${sub}</div>` : "") + `</div>`;
 }
+
+// ---------------------------------------------------------------- height
+
+const CM_PER_IN = 2.54;
+
+function fillHeightForm() {
+  const cm = state.heightCm;
+  $("#height-cm").value = cm ? String(cm) : "";
+  syncFeetInches();
+  $("#height-status").textContent = cm ? "" : "Not set: BMI is hidden.";
+}
+
+function syncFeetInches() {
+  const cm = Number($("#height-cm").value.trim().replace(",", "."));
+  if (!(cm > 0)) {
+    $("#height-ft").value = $("#height-in").value = "";
+    return;
+  }
+  const totalIn = cm / CM_PER_IN;
+  let ft = Math.floor(totalIn / 12);
+  let inches = Math.round((totalIn - ft * 12) * 10) / 10;
+  if (inches >= 12) { ft += 1; inches -= 12; }
+  $("#height-ft").value = String(ft);
+  $("#height-in").value = String(inches);
+}
+
+function syncCentimetres() {
+  const ft = Number($("#height-ft").value.trim() || 0);
+  const inches = Number($("#height-in").value.trim().replace(",", ".") || 0);
+  const total = ft * 12 + inches;
+  $("#height-cm").value = total > 0 && isFinite(total) ? String(Math.round(total * CM_PER_IN * 10) / 10) : "";
+}
+
+$("#height-cm").addEventListener("input", syncFeetInches);
+$("#height-ft").addEventListener("input", syncCentimetres);
+$("#height-in").addEventListener("input", syncCentimetres);
+
+$("#height-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const raw = $("#height-cm").value.trim().replace(",", ".");
+  const status = $("#height-status");
+  try {
+    const res = await api("/api/height", { method: "PUT", body: JSON.stringify({ heightCm: raw === "" ? null : Number(raw) }) });
+    state.heightCm = res.heightCm;
+    fillHeightForm();
+    render();
+    updatePlanSummary();
+    status.textContent = res.heightCm ? "Saved. BMI now shows on the Log tab." : "Height cleared: BMI is hidden.";
+  } catch (err) {
+    status.textContent = err.message;
+    if (err.status === 401) showAuth();
+  }
+});
 
 // ---------------------------------------------------------------- trend tab
 
@@ -677,6 +745,12 @@ function updatePlanSummary() {
        ${losing ? "losing" : "gaining"} <strong>${weekly.toFixed(2)} ${unit}/week</strong>, reaching
        ${plan.goalWeight.toFixed(1)} ${unit} around <strong>${formatDate(end)}</strong>
        (about ${weeks} week${weeks === 1 ? "" : "s"}).`;
+
+  if (state.heightCm) {
+    const startBmi = bodyMassIndex(plan.startWeight, unit, state.heightCm);
+    const goalBmi = bodyMassIndex(plan.goalWeight, unit, state.heightCm);
+    html += `<br>Body mass index: ${startBmi.toFixed(1)} at the start, ${goalBmi.toFixed(1)} at your goal.`;
+  }
 
   const lt = latestTrend();
   if (lt && lt.date >= plan.startDate) {

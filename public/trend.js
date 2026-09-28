@@ -60,6 +60,20 @@ export const KCAL_PER_UNIT = { lb: 3500, kg: 7716 };
 
 const DAY_MS = 86400000;
 
+export const KG_PER_LB = 1 / 2.2046226218;
+
+/**
+ * Body mass index (kg / m²), or null without a height.
+ * @param {number} weight - in `unit`
+ * @param {"lb"|"kg"} unit
+ * @param {?number} heightCm
+ */
+export function bodyMassIndex(weight, unit, heightCm) {
+  if (!heightCm || !(weight > 0)) return null;
+  const kg = unit === "kg" ? weight : weight * KG_PER_LB;
+  return kg / (heightCm / 100) ** 2;
+}
+
 /**
  * Diet plan weight on a date: a straight line from the start weight moving
  * toward the goal at |calorieBalance| / KCAL_PER_UNIT per day, flat at the

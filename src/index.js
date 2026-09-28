@@ -43,10 +43,11 @@ async function route(request, env, url) {
   if (!user) return json({ error: "Not signed in" }, 401);
 
   if (path === "/api/me" && method === "GET") {
-    return json({ email: user.email, unit: user.unit, plan: planOf(user) });
+    return json({ email: user.email, unit: user.unit, plan: planOf(user), heightCm: user.height_cm });
   }
   if (path === "/api/settings" && method === "POST") return saveSettings(request, env, user);
   if (path === "/api/plan" && method === "PUT") return savePlan(request, env, user);
+  if (path === "/api/height" && method === "PUT") return saveHeight(request, env, user);
   if (path === "/api/weights" && method === "GET") return listWeights(env, user);
   if (path === "/api/weight" && method === "PUT") return putWeight(request, env, user);
   if (path === "/api/import" && method === "POST") return importCSV(request, env, user);
@@ -124,7 +125,7 @@ async function authenticate(request, env) {
   if (!token) return null;
   const row = await env.DB.prepare(
     `SELECT u.id, u.email, u.unit, u.plan_start_date, u.plan_start_weight, u.plan_goal_weight,
-            u.plan_calorie_balance, u.plan_show
+            u.plan_calorie_balance, u.plan_show, u.height_cm
      FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > ?`
   ).bind(await sha256Hex(token), Date.now()).first();
@@ -168,6 +169,19 @@ async function savePlan(request, env, user) {
      plan_calorie_balance = ?, plan_show = ? WHERE id = ?`
   ).bind(p.startDate, p.startWeight, p.goalWeight, p.calorieBalance, p.show ? 1 : 0, user.id).run();
   return json({ ok: true, plan: p });
+}
+
+async function saveHeight(request, env, user) {
+  const body = await readJSON(request);
+  let heightCm = null;
+  if (body?.heightCm !== null && body?.heightCm !== undefined && body?.heightCm !== "") {
+    heightCm = Math.round(Number(body.heightCm) * 10) / 10;
+    if (!isFinite(heightCm) || heightCm < 50 || heightCm > 275) {
+      return json({ error: "Height must be between 50 and 275 cm (1'8\" and 9'0\")" }, 400);
+    }
+  }
+  await env.DB.prepare("UPDATE users SET height_cm = ? WHERE id = ?").bind(heightCm, user.id).run();
+  return json({ ok: true, heightCm });
 }
 
 // Returns a normalized plan or an error message string. The balance's sign

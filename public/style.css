@@ -324,6 +324,33 @@ td.var.bad { color: var(--bad); }
   padding: 1rem 1.2rem;
 }
 .panel h2 { margin: 0 0 0.6rem; font-size: 1.15rem; }
+.panel + .panel { margin-top: 1rem; }
+
+.height-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem 0.9rem;
+}
+.height-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.height-form input {
+  font: inherit;
+  width: 5.5rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+}
+.height-form > .muted { padding-bottom: 0.4rem; }
+.height-form .form-buttons { flex-basis: 100%; }
+.stat .sub { font-size: 0.75rem; color: var(--muted); }
 
 /* ------------------------------------------------ trend table */
 

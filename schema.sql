@@ -11,7 +11,9 @@ CREATE TABLE IF NOT EXISTS users (
   plan_start_weight REAL,
   plan_goal_weight REAL,
   plan_calorie_balance INTEGER,
-  plan_show INTEGER NOT NULL DEFAULT 1
+  plan_show INTEGER NOT NULL DEFAULT 1,
+  -- Height for body mass index; NULL = not set (BMI hidden).
+  height_cm REAL
 );
 
 CREATE TABLE IF NOT EXISTS sessions (

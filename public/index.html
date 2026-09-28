@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Weight Log</title>
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9878;&#65039;</text></svg>">
 </head>
 <body>
@@ -117,6 +117,22 @@
 
     <div id="tab-goal" role="tabpanel" hidden>
       <div class="panel">
+        <h2>Height</h2>
+        <p class="muted small">Used only to show your body mass index (BMI) on the Log tab. Enter either
+        centimetres or feet and inches; leave both blank to hide BMI.</p>
+        <form id="height-form" class="height-form">
+          <label>Centimetres <input type="text" inputmode="decimal" id="height-cm" size="6"></label>
+          <span class="muted">or</span>
+          <label>Feet <input type="text" inputmode="numeric" id="height-ft" size="3"></label>
+          <label>Inches <input type="text" inputmode="decimal" id="height-in" size="4"></label>
+          <div class="form-buttons">
+            <button type="submit" class="primary">Save height</button>
+            <span id="height-status" class="muted small" role="status"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
         <h2>Diet plan</h2>
         <p class="muted small">Set a goal and a daily calorie deficit. The plan appears on the Log chart as a
         dashed yellow line, then stays flat at your goal weight once the plan's end date passes, so you can
@@ -145,6 +161,6 @@
   <a href="https://www.fourmilab.ch/hackdiet/" target="_blank" rel="noopener">John Walker's Hacker's Diet</a>.</p>
 </footer>
 
-<script type="module" src="app.js?v=4"></script>
+<script type="module" src="app.js?v=5"></script>
 </body>
 </html>
