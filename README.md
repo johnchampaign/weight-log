@@ -94,23 +94,22 @@ npx wrangler d1 execute weight-log --remote --file migrations/005-settings.sql -
 
 ## Enabling password reset email
 
-Reset emails go through Cloudflare Email Service, which needs the Workers
-Paid plan to send to arbitrary addresses. Once the account has it:
+Reset emails go through [Resend](https://resend.com) (free tier: 3,000 a
+month, 100 a day) from `MAIL_FROM` in `wrangler.jsonc`
+(`noreply@johnchampaign.com`).
 
-```bash
-npx wrangler email sending enable johnchampaign.com
-npx wrangler email sending dns get johnchampaign.com
-```
+1. In Resend, add the domain `johnchampaign.com` and use **Sign in to
+   Cloudflare** to add its DNS records automatically. They all live on
+   subdomains (`send.` and `resend._domainkey.`), so the root SPF record
+   and Email Routing MX records are untouched.
+2. Create an API key with sending access, then store it as a Worker
+   secret (the command prompts for it, so it never lands in a file):
 
-Then add to `wrangler.jsonc` and deploy:
-
-```jsonc
-"send_email": [{ "name": "EMAIL" }],
-"vars": { "MAIL_FROM": "noreply@johnchampaign.com" }
-```
+   ```bash
+   npx wrangler secret put RESEND_API_KEY
+   ```
 
 `/api/features` then reports `passwordReset: true` and the sign-in page
-shows "Forgot your password?". To test locally without sending, run
-`wrangler dev` with those two entries: the binding simulates delivery and
-writes each email under `.wrangler/tmp/email/`.
-
+shows "Forgot your password?". Send failures are logged as
+`password_reset_send_failed` (with Resend's status and message) in the
+Worker's logs.

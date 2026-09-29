@@ -9,6 +9,11 @@
   "observability": {
     "enabled": true
   },
+  // Password reset email sender (Resend). The API key is a secret:
+  //   npx wrangler secret put RESEND_API_KEY
+  "vars": {
+    "MAIL_FROM": "noreply@johnchampaign.com"
+  },
   "d1_databases": [
     {
       "binding": "DB",

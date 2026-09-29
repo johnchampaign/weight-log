@@ -145,11 +145,11 @@ async function authenticate(request, env) {
 
 // ---------------------------------------------------------------- password reset
 
-// Email goes out through the Cloudflare Email Service binding (EMAIL) from
-// MAIL_FROM; both are configured in wrangler.jsonc. Without them the
-// feature reports itself off and the sign-in page hides the link.
+// Email goes out through Resend (free tier) from MAIL_FROM, set in
+// wrangler.jsonc; the API key is the RESEND_API_KEY secret. Without both
+// the feature reports itself off and the sign-in page hides the link.
 function resetEmailEnabled(env) {
-  return !!(env.EMAIL && env.MAIL_FROM);
+  return !!(env.RESEND_API_KEY && env.MAIL_FROM);
 }
 
 // Always answers the same way, and sends in the background, so the reply
@@ -196,16 +196,25 @@ async function sendResetEmail(env, to, link) {
     `<p><a href="${escapeHTML(link)}">Choose a new password</a> (this link works for the next hour).</p>` +
     `<p>If you didn't ask for this, you can ignore this email. Your password won't change.</p>`;
   try {
-    await env.EMAIL.send({
-      to,
-      from: { email: env.MAIL_FROM, name: "Weight Log" },
-      subject: "Reset your Weight Log password",
-      text,
-      html,
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `Weight Log <${env.MAIL_FROM}>`,
+        to: [to],
+        subject: "Reset your Weight Log password",
+        text,
+        html,
+      }),
     });
-    console.log(JSON.stringify({ event: "password_reset_sent" }));
+    if (res.ok) {
+      console.log(JSON.stringify({ event: "password_reset_sent" }));
+    } else {
+      const detail = (await res.text()).slice(0, 300);
+      console.log(JSON.stringify({ event: "password_reset_send_failed", status: res.status, detail }));
+    }
   } catch (err) {
-    console.log(JSON.stringify({ event: "password_reset_send_failed", code: err.code, message: err.message }));
+    console.log(JSON.stringify({ event: "password_reset_send_failed", message: err.message }));
   }
 }
 
