@@ -42,12 +42,10 @@ async function route(request, env, url) {
   const user = await authenticate(request, env);
   if (!user) return json({ error: "Not signed in" }, 401);
 
-  if (path === "/api/me" && method === "GET") {
-    return json({ email: user.email, unit: user.unit, plan: planOf(user), heightCm: user.height_cm });
-  }
-  if (path === "/api/settings" && method === "POST") return saveSettings(request, env, user);
+  if (path === "/api/me" && method === "GET") return json(profileOf(user));
+  if (path === "/api/settings" && method === "PUT") return saveSettings(request, env, user);
+  if (path === "/api/account" && method === "PUT") return saveAccount(request, env, user);
   if (path === "/api/plan" && method === "PUT") return savePlan(request, env, user);
-  if (path === "/api/height" && method === "PUT") return saveHeight(request, env, user);
   if (path === "/api/weights" && method === "GET") return listWeights(env, user);
   if (path === "/api/weight" && method === "PUT") return putWeight(request, env, user);
   if (path === "/api/import" && method === "POST") return importCSV(request, env, user);
@@ -62,9 +60,9 @@ async function register(request, env) {
   const body = await readJSON(request);
   const email = normalizeEmail(body?.email);
   const password = typeof body?.password === "string" ? body.password : "";
-  const unit = body?.unit === "kg" ? "kg" : "lb";
+  const unit = WEIGHT_UNITS.includes(body?.unit) ? body.unit : "lb";
 
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+  if (!validEmail(email)) {
     return json({ error: "Please enter a valid email address" }, 400);
   }
   if (password.length < 8) {
@@ -74,13 +72,18 @@ async function register(request, env) {
   const salt = randomHex(16);
   const hash = await hashPassword(password, salt);
   const result = await env.DB.prepare(
-    "INSERT INTO users (email, password_hash, salt, unit) VALUES (?, ?, ?, ?) ON CONFLICT(email) DO NOTHING RETURNING id"
-  ).bind(email, hash, salt, unit).first();
+    `INSERT INTO users (email, password_hash, salt, unit, display_unit) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(email) DO NOTHING RETURNING id`
+  ).bind(email, hash, salt, unit, unit).first();
 
   if (!result) {
     return json({ error: "An account with that email already exists" }, 409);
   }
   return createSession(env, result.id, { email, unit });
+}
+
+function validEmail(email) {
+  return !!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
 }
 
 async function login(request, env) {
@@ -123,23 +126,145 @@ async function createSession(env, userId, payload) {
 async function authenticate(request, env) {
   const token = getCookie(request, COOKIE);
   if (!token) return null;
+  const tokenHash = await sha256Hex(token);
   const row = await env.DB.prepare(
     `SELECT u.id, u.email, u.unit, u.plan_start_date, u.plan_start_weight, u.plan_goal_weight,
-            u.plan_calorie_balance, u.plan_show, u.height_cm
+            u.plan_calorie_balance, u.plan_show, u.height_cm, u.display_unit, u.energy_unit,
+            u.decimal_char, u.first_name, u.middle_name, u.last_name
      FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > ?`
-  ).bind(await sha256Hex(token), Date.now()).first();
+  ).bind(tokenHash, Date.now()).first();
+  if (row) row.tokenHash = tokenHash;
   return row ?? null;
 }
 
 // ---------------------------------------------------------------- data
 
+// Weight units as HDO: kilogram, pound, stone. Stone logs are stored in
+// pounds, so the storage unit is only ever kg or lb.
+const WEIGHT_UNITS = ["kg", "lb", "st"];
+const storageUnit = (logUnit) => (logUnit === "kg" ? "kg" : "lb");
+
+function profileOf(user) {
+  return {
+    email: user.email,
+    logUnit: user.unit,
+    unit: storageUnit(user.unit),
+    displayUnit: user.display_unit || user.unit,
+    energyUnit: user.energy_unit === "kJ" ? "kJ" : "kcal",
+    decimalChar: user.decimal_char === "," ? "," : ".",
+    firstName: user.first_name || "",
+    middleName: user.middle_name || "",
+    lastName: user.last_name || "",
+    heightCm: user.height_cm,
+    plan: planOf(user),
+  };
+}
+
+// Partial update of display preferences, names and height (HDO's Settings
+// page minus the sign-in fields, which go through saveAccount). Changing the
+// log unit between kg and lb/st converts every stored weight and the plan.
 async function saveSettings(request, env, user) {
   const body = await readJSON(request);
-  const unit = body?.unit === "kg" ? "kg" : body?.unit === "lb" ? "lb" : null;
-  if (!unit) return json({ error: "Unit must be lb or kg" }, 400);
-  await env.DB.prepare("UPDATE users SET unit = ? WHERE id = ?").bind(unit, user.id).run();
-  return json({ ok: true, unit });
+  if (!body || typeof body !== "object") return json({ error: "Missing settings" }, 400);
+  const sets = [], binds = [];
+  const set = (col, value) => { sets.push(`${col} = ?`); binds.push(value); };
+
+  if (body.displayUnit !== undefined) {
+    if (!WEIGHT_UNITS.includes(body.displayUnit)) return json({ error: "Display unit must be kg, lb or st" }, 400);
+    set("display_unit", body.displayUnit);
+  }
+  if (body.energyUnit !== undefined) {
+    if (!["kcal", "kJ"].includes(body.energyUnit)) return json({ error: "Energy unit must be kcal or kJ" }, 400);
+    set("energy_unit", body.energyUnit);
+  }
+  if (body.decimalChar !== undefined) {
+    if (![".", ","].includes(body.decimalChar)) return json({ error: "Decimal character must be . or ," }, 400);
+    set("decimal_char", body.decimalChar);
+  }
+  for (const [key, col] of [["firstName", "first_name"], ["middleName", "middle_name"], ["lastName", "last_name"]]) {
+    if (body[key] !== undefined) {
+      const v = typeof body[key] === "string" ? body[key].trim() : "";
+      if (v.length > 200) return json({ error: "Names are limited to 200 characters" }, 400);
+      set(col, v || null);
+    }
+  }
+  if (body.heightCm !== undefined) {
+    let heightCm = null;
+    if (body.heightCm !== null && body.heightCm !== "") {
+      heightCm = Math.round(Number(body.heightCm) * 10) / 10;
+      if (!isFinite(heightCm) || heightCm < 50 || heightCm > 275) {
+        return json({ error: "Height must be between 50 and 275 cm (1'8\" and 9'0\")" }, 400);
+      }
+    }
+    set("height_cm", heightCm);
+  }
+
+  const statements = [];
+  if (body.logUnit !== undefined) {
+    if (!WEIGHT_UNITS.includes(body.logUnit)) return json({ error: "Log unit must be kg, lb or st" }, 400);
+    set("unit", body.logUnit);
+    const from = storageUnit(user.unit), to = storageUnit(body.logUnit);
+    if (from !== to) {
+      const f = to === "kg" ? 1 / KG_TO_LB : KG_TO_LB;
+      statements.push(
+        env.DB.prepare("UPDATE weights SET weight = ROUND(weight * ?, 6) WHERE user_id = ? AND weight IS NOT NULL")
+          .bind(f, user.id),
+        env.DB.prepare(
+          `UPDATE users SET plan_start_weight = ROUND(plan_start_weight * ?, 6),
+             plan_goal_weight = ROUND(plan_goal_weight * ?, 6) WHERE id = ? AND plan_start_date IS NOT NULL`
+        ).bind(f, f, user.id)
+      );
+    }
+  }
+
+  if (sets.length === 0) return json({ error: "Nothing to change" }, 400);
+  statements.push(env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, user.id));
+  await env.DB.batch(statements);
+
+  const fresh = await env.DB.prepare(
+    `SELECT id, email, unit, plan_start_date, plan_start_weight, plan_goal_weight, plan_calorie_balance,
+            plan_show, height_cm, display_unit, energy_unit, decimal_char, first_name, middle_name, last_name
+     FROM users WHERE id = ?`
+  ).bind(user.id).first();
+  return json(profileOf(fresh));
+}
+
+// Email and password changes need the current password. A new password
+// signs out every other session.
+async function saveAccount(request, env, user) {
+  const body = await readJSON(request);
+  const current = typeof body?.currentPassword === "string" ? body.currentPassword : "";
+  const row = await env.DB.prepare("SELECT password_hash, salt FROM users WHERE id = ?").bind(user.id).first();
+  if (!row || !timingSafeEqualHex(await hashPassword(current, row.salt), row.password_hash)) {
+    return json({ error: "Your current password is incorrect" }, 403);
+  }
+
+  const statements = [];
+  const changed = [];
+  if (body.email !== undefined) {
+    const email = normalizeEmail(body.email);
+    if (!validEmail(email)) return json({ error: "Please enter a valid email address" }, 400);
+    if (email !== user.email) {
+      const taken = await env.DB.prepare("SELECT 1 FROM users WHERE email = ? AND id != ?").bind(email, user.id).first();
+      if (taken) return json({ error: "Another account already uses that email address" }, 409);
+      statements.push(env.DB.prepare("UPDATE users SET email = ? WHERE id = ?").bind(email, user.id));
+      changed.push("email");
+    }
+  }
+  if (body.newPassword !== undefined && body.newPassword !== "") {
+    const pw = typeof body.newPassword === "string" ? body.newPassword : "";
+    if (pw.length < 8) return json({ error: "New password must be at least 8 characters" }, 400);
+    const salt = randomHex(16);
+    statements.push(
+      env.DB.prepare("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?").bind(await hashPassword(pw, salt), salt, user.id),
+      env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?").bind(user.id, user.tokenHash)
+    );
+    changed.push("password");
+  }
+  if (statements.length === 0) return json({ error: "Nothing to change" }, 400);
+  await env.DB.batch(statements);
+  return json({ ok: true, changed });
 }
 
 function planOf(user) {
@@ -171,19 +296,6 @@ async function savePlan(request, env, user) {
   return json({ ok: true, plan: p });
 }
 
-async function saveHeight(request, env, user) {
-  const body = await readJSON(request);
-  let heightCm = null;
-  if (body?.heightCm !== null && body?.heightCm !== undefined && body?.heightCm !== "") {
-    heightCm = Math.round(Number(body.heightCm) * 10) / 10;
-    if (!isFinite(heightCm) || heightCm < 50 || heightCm > 275) {
-      return json({ error: "Height must be between 50 and 275 cm (1'8\" and 9'0\")" }, 400);
-    }
-  }
-  await env.DB.prepare("UPDATE users SET height_cm = ? WHERE id = ?").bind(heightCm, user.id).run();
-  return json({ ok: true, heightCm });
-}
-
 // Returns a normalized plan or an error message string. The balance's sign
 // is derived from the direction of travel (goal below start = deficit).
 function validatePlan(plan) {
@@ -192,8 +304,10 @@ function validatePlan(plan) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || isNaN(Date.parse(startDate))) {
     return "Start date must be YYYY-MM-DD";
   }
-  const startWeight = Math.round(Number(plan.startWeight) * 10) / 10;
-  const goalWeight = Math.round(Number(plan.goalWeight) * 10) / 10;
+  // Six decimals: weights may arrive converted from the display unit, and
+  // six keeps a kg<->lb round trip exact for values entered to 0.1.
+  const startWeight = Math.round(Number(plan.startWeight) * 1e6) / 1e6;
+  const goalWeight = Math.round(Number(plan.goalWeight) * 1e6) / 1e6;
   for (const w of [startWeight, goalWeight]) {
     if (!isFinite(w) || w <= 0 || w > 1500) return "Weights must be between 0 and 1500";
   }
@@ -231,7 +345,9 @@ async function putWeight(request, env, user) {
     if (!isFinite(weight) || weight <= 0 || weight > 1500) {
       return json({ error: "Weight out of range" }, 400);
     }
-    weight = Math.round(weight * 10) / 10;
+    // Six decimals: the client may convert from the display unit, and six
+    // keeps a kg<->lb round trip exact for values entered to 0.1.
+    weight = Math.round(weight * 1e6) / 1e6;
   }
 
   let comment = typeof body.comment === "string" ? body.comment.trim() : "";
@@ -292,7 +408,7 @@ async function importCSV(request, env, user) {
         const u = splitCSVLine(line)[2];
         monthUnit = u === "0" ? "kg" : u === "1" || u === "2" ? "lb" : null;
       } else if (/^Diet-Plan,/.test(line)) {
-        plan = parseHDOPlan(splitCSVLine(line), user.unit);
+        plan = parseHDOPlan(splitCSVLine(line), storageUnit(user.unit));
       } else if (/^date,/i.test(line)) {
         const names = line.split(",").map((c) => c.trim().toLowerCase());
         cols = { comment: names.indexOf("comment"), rung: names.indexOf("rung"), flag: names.indexOf("flag") };
@@ -308,7 +424,7 @@ async function importCSV(request, env, user) {
     let weight = null;
     if (fields[1] !== "" && fields[1] !== undefined) {
       weight = Number(fields[1]);
-      if (monthUnit && monthUnit !== user.unit) {
+      if (monthUnit && monthUnit !== storageUnit(user.unit)) {
         weight = Math.round(weight * (monthUnit === "kg" ? KG_TO_LB : 1 / KG_TO_LB) * 10) / 10;
       }
       if (!isFinite(weight) || weight <= 0 || weight > 1500) {
@@ -399,13 +515,17 @@ async function exportCSV(env, user) {
     "SELECT date, weight, comment, rung, flag FROM weights WHERE user_id = ? ORDER BY date"
   ).bind(user.id).all();
 
-  const lines = [`Date,Weight (${user.unit}),Trend (${user.unit}),Rung,Flag,Comment`];
+  const unit = storageUnit(user.unit);
+  const lines = [`Date,Weight (${unit}),Trend (${unit}),Rung,Flag,Comment`];
   if (results.length > 0) {
     const trend = buildTrendSeries(results, results[results.length - 1].date);
     for (const { date, weight, comment, rung, flag } of results) {
       const t = trend.get(date);
+      // Up to four decimals, trailing zeros dropped: hides the last-digit noise
+      // that kg<->lb conversions of the log unit can leave behind.
+      const w = weight === null ? "" : String(Number(weight.toFixed(4)));
       lines.push(
-        `${date},${weight ?? ""},${t !== undefined ? t.toFixed(2) : ""},${rung ?? ""},${flag ? 1 : 0},${csvQuote(comment)}`
+        `${date},${w},${t !== undefined ? t.toFixed(2) : ""},${rung ?? ""},${flag ? 1 : 0},${csvQuote(comment)}`
       );
     }
   }

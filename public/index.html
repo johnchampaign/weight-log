@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Weight Log</title>
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=11">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9878;&#65039;</text></svg>">
 </head>
 <body>
@@ -13,10 +13,6 @@
   <h1>Weight Log</h1>
   <nav id="user-nav" hidden>
     <span id="nav-email"></span>
-    <div class="unit-toggle" id="unit-toggle" role="group" aria-label="Weight unit">
-      <button type="button" data-unit="lb">lb</button>
-      <button type="button" data-unit="kg">kg</button>
-    </div>
     <button type="button" id="import-btn">Import CSV</button>
     <input type="file" id="import-file" accept=".csv,text/csv" hidden>
     <a href="/api/export.csv" id="export-link" download>Export CSV</a>
@@ -44,6 +40,7 @@
           <select id="auth-unit">
             <option value="lb">Pounds (lb)</option>
             <option value="kg">Kilograms (kg)</option>
+            <option value="st">Stones and pounds (st)</option>
           </select>
         </label>
         <button type="submit" id="auth-submit">Sign in</button>
@@ -63,6 +60,7 @@
       <a href="#chart" role="tab" data-tab="chart">Chart</a>
       <a href="#trend" role="tab" data-tab="trend">Trend</a>
       <a href="#goal" role="tab" data-tab="goal">Goal</a>
+      <a href="#settings" role="tab" data-tab="settings">Settings</a>
     </nav>
 
     <div id="tab-log" role="tabpanel">
@@ -130,7 +128,7 @@
               <tr>
                 <th rowspan="2">Last…</th>
                 <th rowspan="2" class="num"><span class="bad">Gain</span>/<span class="good">Loss</span><br><span id="trend-unit-w"></span>/week</th>
-                <th rowspan="2" class="num"><span class="bad">Excess</span>/<span class="good">Deficit</span><br>kcal/day</th>
+                <th rowspan="2" class="num"><span class="bad">Excess</span>/<span class="good">Deficit</span><br><span id="trend-unit-e"></span>/day</th>
                 <th colspan="3" class="num center">Weight trend</th>
               </tr>
               <tr><th class="num">Min</th><th class="num">Mean</th><th class="num">Max</th></tr>
@@ -153,6 +151,71 @@
 
     <div id="tab-goal" role="tabpanel" hidden>
       <div class="panel">
+        <h2>Diet plan</h2>
+        <p class="muted small">Set a goal and a daily deficit. Tick "Show the plan" to draw it on the
+        Log and Chart tabs as a dashed yellow line, which stays flat at your goal weight once the plan's end date
+        passes, so you can compare your actual trend against it. Your height, for body mass index, is on the
+        Settings tab.</p>
+        <form id="plan-form" class="plan-form">
+          <label>Start date <input type="date" id="plan-start-date" required></label>
+          <label>Start weight (<span class="unit-label"></span>) <input type="text" inputmode="decimal" id="plan-start-weight" required></label>
+          <label>Goal weight (<span class="unit-label"></span>) <input type="text" inputmode="decimal" id="plan-goal-weight" required></label>
+          <label>Daily deficit, or excess to gain (<span id="plan-balance-unit"></span>) <input type="number" id="plan-balance" min="1" max="5000" step="1" value="500" required></label>
+          <label class="check"><input type="checkbox" id="plan-show"> Show the plan on the Log chart</label>
+          <div class="plan-summary" id="plan-summary"></div>
+          <div class="form-buttons">
+            <button type="submit" class="primary">Save plan</button>
+            <button type="button" id="plan-remove" hidden>Remove plan</button>
+            <span id="plan-status" class="muted small" role="status"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="tab-settings" role="tabpanel" hidden>
+      <div class="panel">
+        <h2>Units</h2>
+        <form id="units-form" class="settings-form">
+          <fieldset>
+            <legend>Weight unit</legend>
+            <div class="radio-row">
+              <span class="row-label">Display</span>
+              <label><input type="radio" name="display-unit" value="kg"> kilogram</label>
+              <label><input type="radio" name="display-unit" value="lb"> pound</label>
+              <label><input type="radio" name="display-unit" value="st"> stone</label>
+            </div>
+            <div class="radio-row">
+              <span class="row-label">Log</span>
+              <label><input type="radio" name="log-unit" value="kg"> kilogram</label>
+              <label><input type="radio" name="log-unit" value="lb"> pound</label>
+              <label><input type="radio" name="log-unit" value="st"> stone</label>
+            </div>
+            <p class="muted small">Display is the unit you see and type everywhere on the site. Log is the unit
+            your weights are stored and exported in; changing it between kilograms and pounds converts your
+            stored weights. Stone logs are kept in pounds, and stones show as stones and pounds (14&nbsp;4.2).</p>
+          </fieldset>
+          <fieldset>
+            <legend>Energy unit</legend>
+            <div class="radio-row">
+              <label><input type="radio" name="energy-unit" value="kcal"> calorie (kcal)</label>
+              <label><input type="radio" name="energy-unit" value="kJ"> kilojoule (kJ)</label>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Decimal character</legend>
+            <div class="radio-row">
+              <label><input type="radio" name="decimal-char" value="."> 123.4</label>
+              <label><input type="radio" name="decimal-char" value=","> 123,4</label>
+            </div>
+          </fieldset>
+          <div class="form-buttons">
+            <button type="submit" class="primary">Save units</button>
+            <span id="units-status" class="muted small" role="status"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
         <h2>Height</h2>
         <p class="muted small">Used only to show your body mass index (BMI) on the Log and Chart tabs. Enter either
         centimetres or feet and inches; leave both blank to hide BMI.</p>
@@ -169,21 +232,32 @@
       </div>
 
       <div class="panel">
-        <h2>Diet plan</h2>
-        <p class="muted small">Set a goal and a daily calorie deficit. Tick "Show the plan" to draw it on the
-        Log and Chart tabs as a dashed yellow line, which stays flat at your goal weight once the plan's end date
-        passes, so you can compare your actual trend against it.</p>
-        <form id="plan-form" class="plan-form">
-          <label>Start date <input type="date" id="plan-start-date" required></label>
-          <label>Start weight (<span class="unit-label"></span>) <input type="text" inputmode="decimal" id="plan-start-weight" required></label>
-          <label>Goal weight (<span class="unit-label"></span>) <input type="text" inputmode="decimal" id="plan-goal-weight" required></label>
-          <label>Daily calorie deficit (or excess, to gain) <input type="number" id="plan-balance" min="1" max="5000" step="1" value="500" required></label>
-          <label class="check"><input type="checkbox" id="plan-show"> Show the plan on the Log chart</label>
-          <div class="plan-summary" id="plan-summary"></div>
+        <h2>Name</h2>
+        <p class="muted small">Optional. Shown at the top of the page in place of your email address.</p>
+        <form id="name-form" class="plan-form">
+          <label>First name <input type="text" id="name-first" maxlength="200" autocomplete="given-name"></label>
+          <label>Middle name or initial <input type="text" id="name-middle" maxlength="200" autocomplete="additional-name"></label>
+          <label>Last name <input type="text" id="name-last" maxlength="200" autocomplete="family-name"></label>
           <div class="form-buttons">
-            <button type="submit" class="primary">Save plan</button>
-            <button type="button" id="plan-remove" hidden>Remove plan</button>
-            <span id="plan-status" class="muted small" role="status"></span>
+            <button type="submit" class="primary">Save name</button>
+            <span id="name-status" class="muted small" role="status"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2>Email and password</h2>
+        <p class="muted small">Your email address is also your sign-in name. To change either, enter your
+        current password. A new password signs out your other devices.</p>
+        <form id="account-form" class="plan-form">
+          <label>Email <input type="email" id="acct-email" autocomplete="username" required></label>
+          <label>New password (leave blank to keep) <input type="password" id="acct-new-password" minlength="8" autocomplete="new-password"></label>
+          <label>Retype new password <input type="password" id="acct-retype" autocomplete="new-password"></label>
+          <label>Current password <input type="password" id="acct-current" autocomplete="current-password" required></label>
+          <span id="acct-match" class="small"></span>
+          <div class="form-buttons">
+            <button type="submit" class="primary">Save email and password</button>
+            <span id="acct-status" class="muted small" role="status"></span>
           </div>
         </form>
       </div>
@@ -197,6 +271,6 @@
   <a href="https://www.fourmilab.ch/hackdiet/" target="_blank" rel="noopener">John Walker's Hacker's Diet</a>.</p>
 </footer>
 
-<script type="module" src="app.js?v=11"></script>
+<script type="module" src="app.js?v=14"></script>
 </body>
 </html>

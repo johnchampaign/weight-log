@@ -5,8 +5,9 @@ import {
 
 const state = {
   email: null,
-  unit: "lb",
-  entries: [],        // [{date, weight, comment}] ascending
+  profile: null,      // /api/me: names, units, height, plan
+  units: { store: "lb", log: "lb", display: "lb", energy: "kcal", dec: "." },
+  entries: [],        // [{date, weight, comment, rung, flag}] ascending; weights in units.store
   view: null,         // {year, month} month is 0-based
   plan: null,         // {startDate, startWeight, goalWeight, calorieBalance, show}
   customRange: null,  // {from, to} for the Trend tab
@@ -15,6 +16,85 @@ const state = {
 };
 
 const $ = (sel) => document.querySelector(sel);
+
+// ---------------------------------------------------------------- units
+
+// As in HDO: weights are stored in the log unit (kg, or lb for pound and
+// stone logs) and shown and typed in the display unit; stone displays as
+// "14 4.2" (stones, pounds) and rates of change are in pounds. Energy is
+// worked out in kcal and shown in kcal or kJ. Every number shown uses the
+// chosen decimal character.
+const LB_PER_KG = 2.2046226218;
+const KJ_PER_KCAL = 4.18331; // HDiet::monthlog ENERGY_CONVERSION
+
+const dispBase = () => (state.units.display === "kg" ? "kg" : "lb");
+
+function toDisp(w) {
+  const s = state.units.store, d = dispBase();
+  return s === d ? w : s === "kg" ? w * LB_PER_KG : w / LB_PER_KG;
+}
+
+function fromDisp(v) {
+  const s = state.units.store, d = dispBase();
+  return s === d ? v : s === "kg" ? v / LB_PER_KG : v * LB_PER_KG;
+}
+
+function num(v, digits) {
+  const s = v.toFixed(digits);
+  return state.units.dec === "," ? s.replace(".", ",") : s;
+}
+
+// Weight (stored value) as text in the display unit. `unit` appends the
+// unit: "14 st 4.2 lb" for stone, "200.2 lb", "90.8 kg".
+function fmtW(w, { unit = false } = {}) {
+  const v = toDisp(w);
+  if (state.units.display === "st") {
+    const lb = Math.round(v * 10) / 10;
+    const st = Math.floor(lb / 14);
+    const rest = num(lb - st * 14, 1);
+    return unit ? `${st} st ${rest} lb` : `${st} ${rest}`;
+  }
+  return num(v, 1) + (unit ? ` ${state.units.display}` : "");
+}
+
+// A change in weight (stored units) in the display's base unit.
+const fmtDelta = (d, digits) => num(toDisp(d), digits);
+
+const eUnit = () => state.units.energy;
+const toEnergy = (kcal) => (state.units.energy === "kJ" ? kcal * KJ_PER_KCAL : kcal);
+const fromEnergy = (v) => (state.units.energy === "kJ" ? v / KJ_PER_KCAL : v);
+const energyWord = () => (state.units.energy === "kJ" ? "Energy" : "Calorie");
+
+// Typed weight in the display unit -> stored value; null if blank, NaN if
+// unreadable. Stone accepts "14 4.2" (st lb) or a plain number of stones.
+function parseW(text) {
+  const t = text.trim().replace(/,/g, ".");
+  if (t === "") return null;
+  let v;
+  if (state.units.display === "st") {
+    const m = t.match(/^(\d+)\s*(?:st)?\s+(\d+(?:\.\d*)?)\s*(?:lb)?$/i);
+    if (m) v = Number(m[1]) * 14 + Number(m[2]);
+    else if (/^\d+(\.\d*)?\s*(?:st)?$/i.test(t)) v = parseFloat(t) * 14;
+    else return NaN;
+  } else {
+    if (!/^\d+(\.\d*)?$/.test(t) && !/^\.\d+$/.test(t)) return NaN;
+    v = Number(t);
+  }
+  const w = fromDisp(v);
+  // Same unit as storage: keep HDO's one decimal. Converted: full precision.
+  return state.units.store === dispBase() ? Math.round(w * 10) / 10 : w;
+}
+
+// Axis label for a value already in display units.
+function fmtAxis(v) {
+  if (state.units.display === "st") {
+    const st = Math.floor(v / 14 + 1e-9);
+    const lb = v - st * 14;
+    if (Math.abs(lb) < 1e-9) return `${st} st`;
+    return `${st} ${Math.abs(lb - Math.round(lb)) < 1e-9 ? Math.round(lb) : num(lb, 1)}`;
+  }
+  return Math.abs(v - Math.round(v)) < 1e-9 ? String(Math.round(v)) : num(v, 1);
+}
 
 // ---------------------------------------------------------------- api
 
@@ -53,10 +133,7 @@ function showAuth() {
 
 async function enterApp() {
   const [me, { weights }] = await Promise.all([api("/api/me"), api("/api/weights")]);
-  state.email = me.email;
-  state.unit = me.unit;
-  state.plan = me.plan;
-  state.heightCm = me.heightCm ?? null;
+  applyProfile(me);
   state.entries = weights;
   state.customRange = null;
   $("#range-from").value = "";
@@ -66,12 +143,28 @@ async function enterApp() {
   $("#auth-view").hidden = true;
   $("#log-view").hidden = false;
   $("#user-nav").hidden = false;
-  $("#nav-email").textContent = me.email;
-  renderUnitToggle();
   showTab();
-  fillHeightForm();
+  fillSettingsForms();
   fillPlanForm();
   render();
+}
+
+function applyProfile(me) {
+  state.profile = me;
+  state.email = me.email;
+  state.plan = me.plan;
+  state.heightCm = me.heightCm ?? null;
+  state.units = {
+    store: me.unit,
+    log: me.logUnit,
+    display: me.displayUnit,
+    energy: me.energyUnit,
+    dec: me.decimalChar,
+  };
+  const name = [me.firstName, me.lastName].filter(Boolean).join(" ");
+  $("#nav-email").textContent = name || me.email;
+  $("#nav-email").title = me.email;
+  renderUnitLabels();
 }
 
 // ---------------------------------------------------------------- auth ui
@@ -153,19 +246,22 @@ $("#import-file").addEventListener("change", async (e) => {
   }
 });
 
-// ---------------------------------------------------------------- unit toggle
+// ---------------------------------------------------------------- unit labels
 
-function renderUnitToggle() {
-  for (const btn of document.querySelectorAll("#unit-toggle button")) {
-    btn.classList.toggle("active", btn.dataset.unit === state.unit);
+function renderUnitLabels() {
+  const d = state.units.display;
+  for (const el of document.querySelectorAll(".unit-label")) {
+    el.textContent = d === "st" ? `st lb, e.g. 14 ${num(4.2, 1)}` : d;
   }
-  for (const el of document.querySelectorAll(".unit-label")) el.textContent = state.unit;
-  $("#trend-unit-w").textContent = state.unit;
+  $("#trend-unit-w").textContent = dispBase();
+  $("#trend-unit-e").textContent = eUnit();
+  $("#plan-balance-unit").textContent = eUnit();
+  $("#plan-balance").max = state.units.energy === "kJ" ? "20900" : "5000";
 }
 
 // ---------------------------------------------------------------- tabs
 
-const TABS = ["log", "history", "chart", "trend", "goal"];
+const TABS = ["log", "history", "chart", "trend", "goal", "settings"];
 
 function showTab() {
   const name = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
@@ -179,15 +275,6 @@ function showTab() {
 }
 
 window.addEventListener("hashchange", showTab);
-
-$("#unit-toggle").addEventListener("click", async (e) => {
-  const unit = e.target.dataset?.unit;
-  if (!unit || unit === state.unit) return;
-  state.unit = unit;
-  renderUnitToggle();
-  render();
-  await api("/api/settings", { method: "POST", body: JSON.stringify({ unit }) }).catch(() => {});
-});
 
 // ---------------------------------------------------------------- month nav
 
@@ -288,20 +375,22 @@ function renderTable({ dates, today, trend, byDate, weightsByDate }) {
 
     const weightTd = document.createElement("td");
     weightTd.className = "num";
-    const wInput = makeInput(date, "w", weight !== undefined ? String(weight) : "", "Weight", isFuture);
-    wInput.inputMode = "decimal";
+    const shown = weight !== undefined ? fmtW(weight) : "";
+    const wInput = makeInput(date, "w", shown, "Weight", isFuture);
+    wInput.dataset.orig = shown;
+    wInput.inputMode = state.units.display === "st" ? "text" : "decimal";
     wInput.placeholder = isFuture ? "" : "—";
     weightTd.appendChild(wInput);
 
     const trendTd = document.createElement("td");
     trendTd.className = "num";
-    trendTd.textContent = !isFuture && t !== undefined ? t.toFixed(1) : "";
+    trendTd.textContent = !isFuture && t !== undefined ? fmtW(t) : "";
 
     const varTd = document.createElement("td");
     varTd.className = "num var";
     if (weight !== undefined && t !== undefined) {
       const v = weight - t;
-      varTd.textContent = (v >= 0 ? "+" : "") + v.toFixed(1);
+      varTd.textContent = (v >= 0 ? "+" : "") + fmtDelta(v, 1);
       varTd.classList.add(v > 0 ? "bad" : "good");
     }
 
@@ -379,15 +468,15 @@ async function onDayChange(e) {
   const field = (kind) => document.querySelector(`#log-table input[data-date="${date}"][data-kind="${kind}"]`);
   const wInput = field("w"), rInput = field("r"), fInput = field("f"), cInput = field("c");
 
-  const raw = wInput.value.trim().replace(",", ".");
-  let weight = null;
-  if (raw !== "") {
-    weight = Number(raw);
-    if (!isFinite(weight) || weight <= 0 || weight > 1500) {
-      fieldError(wInput, "Enter a weight, or leave it blank.");
-      return;
-    }
-    weight = Math.round(weight * 10) / 10;
+  // An untouched weight keeps its stored value exactly; only edits are
+  // converted from the display unit.
+  const stored = state.entries.find((en) => en.date === date)?.weight ?? null;
+  const weight = wInput.value === wInput.dataset.orig ? stored : parseW(wInput.value);
+  if (weight !== null && !(Number.isFinite(weight) && weight > 0 && weight <= 1500)) {
+    fieldError(wInput, state.units.display === "st"
+      ? `Enter stones and pounds (e.g. 14 ${num(4.2, 1)}), or leave it blank.`
+      : "Enter a weight, or leave it blank.");
+    return;
   }
 
   const r = resolveRung(date, rInput.value);
@@ -443,7 +532,7 @@ function renderChart({ dates, today, trend, byDate, weightsByDate }) {
   const planPoints = [];
   if (state.plan?.show) {
     for (const d of dates) {
-      const pw = planWeightOn(state.plan, d, state.unit);
+      const pw = planWeightOn(state.plan, d, state.units.store);
       if (pw !== null) planPoints.push([d, pw]);
     }
   }
@@ -458,9 +547,9 @@ function renderChart({ dates, today, trend, byDate, weightsByDate }) {
   const n = dates.length;
 
   const values = [];
-  for (const d of plotDates) values.push(trend.get(d));
-  for (const d of logged) values.push(weightsByDate.get(d));
-  for (const [, pw] of planPoints) values.push(pw);
+  for (const d of plotDates) values.push(toDisp(trend.get(d)));
+  for (const d of logged) values.push(toDisp(weightsByDate.get(d)));
+  for (const [, pw] of planPoints) values.push(toDisp(pw));
   let lo, hi;
   if (values.length > 0) {
     lo = Math.min(...values);
@@ -469,20 +558,23 @@ function renderChart({ dates, today, trend, byDate, weightsByDate }) {
     lo -= pad; hi += pad;
   } else {
     // Only rungs this month: HDO's default adult range.
-    [lo, hi] = state.unit === "kg" ? [40, 120] : [90, 265];
+    [lo, hi] = dispBase() === "kg" ? [40, 120] : [90, 265];
   }
 
   const x = (date) => L + ((parseDate(date).getUTCDate() - 0.5) / n) * (W - L - R);
-  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  // y() takes stored weights; the scale itself is in display units.
+  const yd = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const y = (w) => yd(toDisp(w));
   const yRung = (r) => (H - B) - ((r - 1) / RUNG_MAX) * (H - T - B);
 
   // y gridlines: pick a step giving ~5 lines
   const span = hi - lo;
-  const step = [0.5, 1, 2, 5, 10, 20, 50].find((s) => span / s <= 7) || 100;
+  const steps = state.units.display === "st" ? [1, 2, 7, 14, 28, 70] : [0.5, 1, 2, 5, 10, 20, 50];
+  const step = steps.find((s) => span / s <= 7) || 100;
   let grid = "";
   for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
-    grid += `<line x1="${L}" y1="${y(v)}" x2="${W - R}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/>` +
-            `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${roundLabel(v)}</text>`;
+    grid += `<line x1="${L}" y1="${yd(v)}" x2="${W - R}" y2="${yd(v)}" stroke="var(--line)" stroke-width="1"/>` +
+            `<text x="${L - 6}" y="${yd(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmtAxis(v)}</text>`;
   }
 
   // x labels: every ~5 days
@@ -522,7 +614,7 @@ function renderChart({ dates, today, trend, byDate, weightsByDate }) {
     const e = byDate.get(date);
     const wx = x(date), wy = y(weightsByDate.get(date));
     const dotY = wy > y(trend.get(date)) ? wy + 8.5 : wy - 8.5;
-    const tip = `${date}: ${weightsByDate.get(date)} ${state.unit}` +
+    const tip = `${date}: ${fmtW(weightsByDate.get(date), { unit: true })}` +
       (e.rung ? ` · rung ${e.rung}` : "") + (e.flag ? " · flagged" : "") + (e.comment ? ` — ${e.comment}` : "");
     marks += `<g><title>${escapeXML(tip)}</title>` +
       `<path d="M ${wx} ${wy - 4.6} L ${wx + 4.6} ${wy} L ${wx} ${wy + 4.6} L ${wx - 4.6} ${wy} Z"
@@ -538,7 +630,7 @@ function renderChart({ dates, today, trend, byDate, weightsByDate }) {
     const d = pts.map(([date, pw], i) => `${i === 0 ? "M" : "L"} ${x(date).toFixed(1)} ${y(pw).toFixed(1)}`).join(" ");
     const [lastDate, lastPw] = planPoints[planPoints.length - 1];
     planLine = `<path d="${d}" fill="none" stroke="var(--plan)" stroke-width="2" stroke-dasharray="7 5">
-                  <title>Diet plan: ${lastPw.toFixed(1)} ${state.unit} on ${lastDate}</title></path>`;
+                  <title>Diet plan: ${fmtW(lastPw, { unit: true })} on ${lastDate}</title></path>`;
   }
 
   wrap.innerHTML = `
@@ -579,16 +671,12 @@ function escapeXML(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function roundLabel(v) {
-  return Math.abs(v - Math.round(v)) < 1e-9 ? String(Math.round(v)) : v.toFixed(1);
-}
-
 // ---------------------------------------------------------------- stats
 
 function renderStats({ dates, trend, byDate, weightsByDate }) {
   const el = $("#stats");
   const lastLogged = [...dates].reverse().find((d) => weightsByDate.has(d));
-  const unit = state.unit;
+  const unit = state.units.store;
   let cells = "";
 
   if (lastLogged) {
@@ -600,17 +688,17 @@ function renderStats({ dates, trend, byDate, weightsByDate }) {
     const entriesCount = dates.filter((d) => weightsByDate.has(d)).length;
     const endTrend = trend.get(lastLogged);
 
-    cells += statCell("Trend now", `${endTrend.toFixed(1)} ${unit}`);
+    cells += statCell("Trend now", fmtW(endTrend, { unit: true }));
     cells += statCell("Entries this month", String(entriesCount));
 
     if (slope !== null) {
       const weekly = slope * 7;
       const sign = weekly > 0 ? "+" : "";
-      cells += statCell("Rate", `${sign}${weekly.toFixed(2)} ${unit}/week`, weekly);
+      cells += statCell("Rate", `${sign}${fmtDelta(weekly, 2)} ${dispBase()}/week`, weekly);
       const kcal = slope * KCAL_PER_UNIT[unit];
       cells += statCell(
-        kcal <= 0 ? "Calorie deficit" : "Calorie excess",
-        `${Math.abs(Math.round(kcal))} kcal/day`,
+        `${energyWord()} ${kcal <= 0 ? "deficit" : "excess"}`,
+        `${Math.abs(Math.round(toEnergy(kcal)))} ${eUnit()}/day`,
         kcal
       );
     }
@@ -622,7 +710,7 @@ function renderStats({ dates, trend, byDate, weightsByDate }) {
       const meanTrend = weighedTrend.reduce((a, b) => a + b, 0) / weighedTrend.length;
       const recent = bodyMassIndex(endTrend, unit, state.heightCm);
       const mean = bodyMassIndex(meanTrend, unit, state.heightCm);
-      cells += statCell("Body mass index", recent.toFixed(1), 0, `month mean ${mean.toFixed(1)}`);
+      cells += statCell("Body mass index", num(recent, 1), 0, `month mean ${num(mean, 1)}`);
     }
   }
 
@@ -642,13 +730,72 @@ function statCell(label, value, signedForColor = 0, sub = "") {
     (sub ? `<div class="sub">${sub}</div>` : "") + `</div>`;
 }
 
-// ---------------------------------------------------------------- height
+// ---------------------------------------------------------------- settings tab
+
+// HDO's Settings page (HackDiet.pl q=modacct): units, height, name, and
+// sign-in details.
+function fillSettingsForms() {
+  const p = state.profile, u = state.units;
+  const pick = (name, value) => {
+    const el = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (el) el.checked = true;
+  };
+  pick("log-unit", u.log);
+  pick("display-unit", u.display);
+  pick("energy-unit", u.energy);
+  pick("decimal-char", u.dec);
+  $("#units-status").textContent = "";
+  fillHeightForm();
+  $("#name-first").value = p.firstName;
+  $("#name-middle").value = p.middleName;
+  $("#name-last").value = p.lastName;
+  $("#name-status").textContent = "";
+  $("#acct-email").value = p.email;
+  $("#acct-new-password").value = $("#acct-retype").value = $("#acct-current").value = "";
+  $("#acct-match").textContent = "";
+  $("#acct-status").textContent = "";
+}
+
+async function saveSettings(changes, statusEl, message) {
+  try {
+    const me = await api("/api/settings", { method: "PUT", body: JSON.stringify(changes) });
+    applyProfile(me);
+    if ("logUnit" in changes) state.entries = (await api("/api/weights")).weights;
+    fillSettingsForms();
+    fillPlanForm();
+    render();
+    statusEl.textContent = message;
+  } catch (err) {
+    statusEl.textContent = err.message;
+    if (err.status === 401) showAuth();
+  }
+}
+
+$("#units-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const val = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
+  const changes = {
+    displayUnit: val("display-unit"),
+    energyUnit: val("energy-unit"),
+    decimalChar: val("decimal-char"),
+  };
+  const logUnit = val("log-unit");
+  if (logUnit !== state.units.log) {
+    const converts = (logUnit === "kg") !== (state.units.log === "kg");
+    if (converts && !confirm(
+      "Changing the log unit converts every weight you've stored to " +
+      (logUnit === "kg" ? "kilograms" : "pounds") + ". Your log will look the same in your display unit. Continue?"
+    )) return;
+    changes.logUnit = logUnit;
+  }
+  await saveSettings(changes, $("#units-status"), "Saved.");
+});
 
 const CM_PER_IN = 2.54;
 
 function fillHeightForm() {
   const cm = state.heightCm;
-  $("#height-cm").value = cm ? String(cm) : "";
+  $("#height-cm").value = cm ? (Number.isInteger(cm) ? String(cm) : num(cm, 1)) : "";
   syncFeetInches();
   $("#height-status").textContent = cm ? "" : "Not set: BMI is hidden.";
 }
@@ -664,14 +811,15 @@ function syncFeetInches() {
   let inches = Math.round((totalIn - ft * 12) * 10) / 10;
   if (inches >= 12) { ft += 1; inches -= 12; }
   $("#height-ft").value = String(ft);
-  $("#height-in").value = String(inches);
+  $("#height-in").value = Number.isInteger(inches) ? String(inches) : num(inches, 1);
 }
 
 function syncCentimetres() {
   const ft = Number($("#height-ft").value.trim() || 0);
   const inches = Number($("#height-in").value.trim().replace(",", ".") || 0);
   const total = ft * 12 + inches;
-  $("#height-cm").value = total > 0 && isFinite(total) ? String(Math.round(total * CM_PER_IN * 10) / 10) : "";
+  const cm = Math.round(total * CM_PER_IN * 10) / 10;
+  $("#height-cm").value = total > 0 && isFinite(total) ? (Number.isInteger(cm) ? String(cm) : num(cm, 1)) : "";
 }
 
 $("#height-cm").addEventListener("input", syncFeetInches);
@@ -681,14 +829,51 @@ $("#height-in").addEventListener("input", syncCentimetres);
 $("#height-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const raw = $("#height-cm").value.trim().replace(",", ".");
-  const status = $("#height-status");
+  await saveSettings({ heightCm: raw === "" ? null : Number(raw) }, $("#height-status"),
+    raw === "" ? "Height cleared: BMI is hidden." : "Saved. BMI shows on the Log and Chart tabs.");
+});
+
+$("#name-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveSettings({
+    firstName: $("#name-first").value,
+    middleName: $("#name-middle").value,
+    lastName: $("#name-last").value,
+  }, $("#name-status"), "Saved.");
+});
+
+function updatePasswordMatch() {
+  const a = $("#acct-new-password").value, b = $("#acct-retype").value;
+  $("#acct-match").textContent = !a && !b ? "" : a === b ? "✓ Passwords match" : "Passwords don't match yet";
+  $("#acct-match").className = "small " + (!a && !b ? "" : a === b ? "good" : "bad");
+}
+$("#acct-new-password").addEventListener("input", updatePasswordMatch);
+$("#acct-retype").addEventListener("input", updatePasswordMatch);
+
+$("#account-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = $("#acct-status");
+  const email = $("#acct-email").value.trim();
+  const newPassword = $("#acct-new-password").value;
+  if (newPassword && newPassword !== $("#acct-retype").value) {
+    status.textContent = "The new passwords don't match.";
+    return;
+  }
+  const body = { currentPassword: $("#acct-current").value };
+  if (email.toLowerCase() !== state.email) body.email = email;
+  if (newPassword) body.newPassword = newPassword;
+  if (!body.email && !body.newPassword) {
+    status.textContent = "Change your email or enter a new password first.";
+    return;
+  }
   try {
-    const res = await api("/api/height", { method: "PUT", body: JSON.stringify({ heightCm: raw === "" ? null : Number(raw) }) });
-    state.heightCm = res.heightCm;
-    fillHeightForm();
-    render();
-    updatePlanSummary();
-    status.textContent = res.heightCm ? "Saved. BMI now shows on the Log tab." : "Height cleared: BMI is hidden.";
+    const res = await api("/api/account", { method: "PUT", body: JSON.stringify(body) });
+    applyProfile(await api("/api/me"));
+    fillSettingsForms();
+    $("#acct-status").textContent =
+      res.changed.includes("password")
+        ? "Saved. Your password is changed and any other signed-in devices have been signed out."
+        : "Saved.";
   } catch (err) {
     status.textContent = err.message;
     if (err.status === 401) showAuth();
@@ -844,7 +1029,7 @@ function renderHistoryChart() {
   const days = Array.from({ length: n }, (_, i) => addDays(from, i));
   const trend = buildTrendSeries(state.entries, to);
   const byDate = new Map(state.entries.map((e) => [e.date, e]));
-  const unit = state.unit;
+  const unit = state.units.store;
 
   const weightOf = (d) => { const w = byDate.get(d)?.weight; return typeof w === "number" && w > 0 ? w : null; };
   const rungs = days.map((d) => byDate.get(d)?.rung || null);
@@ -879,28 +1064,35 @@ function renderHistoryChart() {
   const values = [];
   for (const d of days) {
     const w = weightOf(d), t = trend.get(d);
-    if (w !== null) values.push(w);
-    if (t !== undefined) values.push(t);
+    if (w !== null) values.push(toDisp(w));
+    if (t !== undefined) values.push(toDisp(t));
   }
-  for (const [, pw] of planPts) values.push(pw);
+  for (const [, pw] of planPts) values.push(toDisp(pw));
   let lo = Math.min(...values), hi = Math.max(...values);
   if (hi - lo < 1e-9) { lo -= 10; hi += 10; }
   const maxRows = plotH / 22;
   let step = 1;
-  for (let power = 1; ; power *= 10) {
-    const s = [1, 2, 5].map((f) => f * power).find((c) => (hi - lo) / c <= maxRows);
-    if (s) { step = s; break; }
+  if (state.units.display === "st") {
+    // Whole and half stones read better than 1/2/5 steps of pounds.
+    step = [1, 2, 7, 14, 28, 70, 140].find((c) => (hi - lo) / c <= maxRows) || 280;
+  } else {
+    for (let power = 1; ; power *= 10) {
+      const s = [1, 2, 5].map((f) => f * power).find((c) => (hi - lo) / c <= maxRows);
+      if (s) { step = s; break; }
+    }
   }
   lo = Math.floor(lo / step) * step;
   hi = Math.ceil(hi / step) * step;
-  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * plotH;
+  // y() takes stored weights; the scale itself is in display units.
+  const yd = (v) => T + (1 - (v - lo) / (hi - lo)) * plotH;
+  const y = (w) => yd(toDisp(w));
   const yRung = (r) => (H - B) - ((r - 1) / RUNG_MAX) * plotH;
 
   let svg = `<text x="${L + plotW / 2}" y="${T - 10}" text-anchor="middle" font-size="12" fill="var(--ink)">` +
     `${formatDate(from)} – ${formatDate(to)}</text>`;
   for (let v = lo; v <= hi + 1e-9; v += step) {
-    svg += `<line x1="${L}" y1="${y(v)}" x2="${W - R}" y2="${y(v)}" stroke="var(--line)"/>` +
-      `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${roundLabel(v)}</text>`;
+    svg += `<line x1="${L}" y1="${yd(v)}" x2="${W - R}" y2="${yd(v)}" stroke="var(--line)"/>` +
+      `<text x="${L - 6}" y="${yd(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmtAxis(v)}</text>`;
   }
   for (const { i, label, major } of chartTicks(days, plotW)) {
     const tx = xAt(i);
@@ -921,7 +1113,7 @@ function renderHistoryChart() {
         const w = weightOf(d);
         if (w === null) return;
         const e = byDate.get(d), wx = xAt(i), wy = y(w), ty = y(trend.get(d));
-        const tip = `${d}: ${w} ${unit}` + (e.rung ? ` · rung ${e.rung}` : "") +
+        const tip = `${d}: ${fmtW(w, { unit: true })}` + (e.rung ? ` · rung ${e.rung}` : "") +
           (e.flag ? " · flagged" : "") + (e.comment ? ` — ${e.comment}` : "");
         weightsSVG += `<line x1="${wx}" y1="${wy}" x2="${wx}" y2="${ty}" stroke="var(--good)" stroke-width="1.2"/>` +
           `<g><title>${escapeXML(tip)}</title><path d="M ${wx} ${wy - 4} L ${wx + 4} ${wy} L ${wx} ${wy + 4} L ${wx - 4} ${wy} Z"
@@ -995,8 +1187,9 @@ function renderHistoryChart() {
   const [r] = analyseTrend(trend, [[from, to]]);
   if (r && r.slope !== null) {
     const weekly = r.slope * 7, kcal = r.slope * KCAL_PER_UNIT[unit];
-    cells += statCell("Rate", `${weekly > 0 ? "+" : ""}${weekly.toFixed(2)} ${unit}/week`, weekly);
-    cells += statCell(kcal <= 0 ? "Calorie deficit" : "Calorie excess", `${Math.abs(Math.round(kcal))} kcal/day`, kcal);
+    cells += statCell("Rate", `${weekly > 0 ? "+" : ""}${fmtDelta(weekly, 2)} ${dispBase()}/week`, weekly);
+    cells += statCell(`${energyWord()} ${kcal <= 0 ? "deficit" : "excess"}`,
+      `${Math.abs(Math.round(toEnergy(kcal)))} ${eUnit()}/day`, kcal);
   }
   const flagged = days.filter((d) => byDate.get(d)?.flag).length;
   const pct = Math.round((flagged * 100) / n);
@@ -1005,7 +1198,7 @@ function renderHistoryChart() {
     const trendVals = days.filter((d) => trend.has(d)).map((d) => trend.get(d));
     const recent = bodyMassIndex(trendVals[trendVals.length - 1], unit, state.heightCm);
     const mean = bodyMassIndex(r.mean, unit, state.heightCm);
-    cells += statCell("Body mass index", recent.toFixed(1), 0, `mean ${mean.toFixed(1)} over the period`);
+    cells += statCell("Body mass index", num(recent, 1), 0, `mean ${num(mean, 1)} over the period`);
   }
   statsEl.innerHTML = cells;
 }
@@ -1089,15 +1282,15 @@ function renderTrendTab() {
     if (!r || r.slope === null) {
       tr.innerHTML = `<td>${row.name}</td><td class="num" colspan="5">Not enough data</td>`;
     } else {
-      const weekly = r.slope * 7;
-      const kcal = r.slope * KCAL_PER_UNIT[state.unit];
+      const weekly = toDisp(r.slope * 7);
+      const energy = toEnergy(r.slope * KCAL_PER_UNIT[state.units.store]);
       tr.innerHTML =
         `<td>${row.name}</td>` +
         `<td class="num ${signClass(weekly, 2)}">${signed(weekly, 2)}</td>` +
-        `<td class="num ${signClass(kcal, 0)}">${signed(kcal, 0)}</td>` +
-        `<td class="num">${r.min.toFixed(1)}</td>` +
-        `<td class="num">${r.mean.toFixed(1)}</td>` +
-        `<td class="num">${r.max.toFixed(1)}</td>`;
+        `<td class="num ${signClass(energy, 0)}">${signed(energy, 0)}</td>` +
+        `<td class="num">${fmtW(r.min)}</td>` +
+        `<td class="num">${fmtW(r.mean)}</td>` +
+        `<td class="num">${fmtW(r.max)}</td>`;
     }
     tbody.appendChild(tr);
   });
@@ -1106,8 +1299,8 @@ function renderTrendTab() {
 // Signed figure as HDO prints it: "+0.49", "−0.49", and "0.00" with no sign
 // or colour when it rounds to zero.
 function signed(v, digits) {
-  const s = Math.abs(v).toFixed(digits);
-  if (Number(s) === 0) return s;
+  const s = num(Math.abs(v), digits);
+  if (Number(Math.abs(v).toFixed(digits)) === 0) return s;
   return (v > 0 ? "+" : "−") + s;
 }
 
@@ -1157,25 +1350,35 @@ function fillPlanForm() {
   const p = state.plan;
   const lt = latestTrend();
   $("#plan-start-date").value = p ? p.startDate : todayISO();
-  $("#plan-start-weight").value = p ? String(p.startWeight) : lt ? lt.value.toFixed(1) : "";
-  $("#plan-goal-weight").value = p ? String(p.goalWeight) : "";
-  $("#plan-balance").value = p ? String(Math.abs(p.calorieBalance)) : "500";
+  $("#plan-start-weight").value = p ? fmtW(p.startWeight) : lt ? fmtW(lt.value) : "";
+  $("#plan-goal-weight").value = p ? fmtW(p.goalWeight) : "";
+  $("#plan-balance").value = String(Math.round(toEnergy(p ? Math.abs(p.calorieBalance) : 500)));
   $("#plan-show").checked = p ? p.show : false;
   $("#plan-remove").hidden = !p;
   $("#plan-status").textContent = "";
   updatePlanSummary();
 }
 
+// Fields left as displayed keep the saved plan's exact values, so viewing
+// in another unit never nudges them.
 function readPlanForm() {
+  const p = state.plan;
+  const sw = $("#plan-start-weight").value, gw = $("#plan-goal-weight").value;
+  const startWeight = p && sw === fmtW(p.startWeight) ? p.startWeight : parseW(sw);
+  const goalWeight = p && gw === fmtW(p.goalWeight) ? p.goalWeight : parseW(gw);
+  const shownBalance = Number($("#plan-balance").value);
+  const kcal = p && shownBalance === Math.round(toEnergy(Math.abs(p.calorieBalance)))
+    ? Math.abs(p.calorieBalance)
+    : Math.round(fromEnergy(shownBalance));
   const plan = {
     startDate: $("#plan-start-date").value,
-    startWeight: Number($("#plan-start-weight").value.trim().replace(",", ".")),
-    goalWeight: Number($("#plan-goal-weight").value.trim().replace(",", ".")),
-    calorieBalance: Number($("#plan-balance").value),
+    startWeight,
+    goalWeight,
+    calorieBalance: kcal,
     show: $("#plan-show").checked,
   };
-  const ok = plan.startDate && plan.startWeight > 0 && plan.goalWeight > 0 && plan.calorieBalance > 0;
-  if (ok && plan.goalWeight < plan.startWeight) plan.calorieBalance = -plan.calorieBalance;
+  const ok = plan.startDate && startWeight > 0 && goalWeight > 0 && kcal > 0;
+  if (ok && goalWeight < startWeight) plan.calorieBalance = -kcal;
   return ok ? plan : null;
 }
 
@@ -1183,26 +1386,26 @@ function updatePlanSummary() {
   const el = $("#plan-summary");
   const plan = readPlanForm();
   if (!plan) {
-    el.textContent = "Enter a start weight, goal weight and daily calorie figure to see your projection.";
+    el.textContent = `Enter a start weight, goal weight and daily ${eUnit()} figure to see your projection.`;
     return;
   }
-  const unit = state.unit;
+  const unit = state.units.store;
   const weekly = (Math.abs(plan.calorieBalance) * 7) / KCAL_PER_UNIT[unit];
   const losing = plan.goalWeight < plan.startWeight;
   const end = planEndDate(plan, unit);
   const weeks = Math.round((parseDate(end) - parseDate(plan.startDate)) / (7 * 86400000));
 
   let html = plan.goalWeight === plan.startWeight
-    ? `Your goal equals your start weight: the plan is a flat line at ${plan.goalWeight.toFixed(1)} ${unit}.`
-    : `A ${Math.abs(plan.calorieBalance)} kcal/day ${losing ? "deficit" : "excess"} means
-       ${losing ? "losing" : "gaining"} <strong>${weekly.toFixed(2)} ${unit}/week</strong>, reaching
-       ${plan.goalWeight.toFixed(1)} ${unit} around <strong>${formatDate(end)}</strong>
+    ? `Your goal equals your start weight: the plan is a flat line at ${fmtW(plan.goalWeight, { unit: true })}.`
+    : `A ${Math.round(toEnergy(Math.abs(plan.calorieBalance)))} ${eUnit()}/day ${losing ? "deficit" : "excess"} means
+       ${losing ? "losing" : "gaining"} <strong>${fmtDelta(weekly, 2)} ${dispBase()}/week</strong>, reaching
+       ${fmtW(plan.goalWeight, { unit: true })} around <strong>${formatDate(end)}</strong>
        (about ${weeks} week${weeks === 1 ? "" : "s"}).`;
 
   if (state.heightCm) {
     const startBmi = bodyMassIndex(plan.startWeight, unit, state.heightCm);
     const goalBmi = bodyMassIndex(plan.goalWeight, unit, state.heightCm);
-    html += `<br>Body mass index: ${startBmi.toFixed(1)} at the start, ${goalBmi.toFixed(1)} at your goal.`;
+    html += `<br>Body mass index: ${num(startBmi, 1)} at the start, ${num(goalBmi, 1)} at your goal.`;
   }
 
   const lt = latestTrend();
@@ -1210,8 +1413,8 @@ function updatePlanSummary() {
     const target = planWeightOn(plan, lt.date, unit);
     const diff = lt.value - target;
     const ahead = losing ? diff <= 0 : diff >= 0;
-    html += `<br>On ${formatDate(lt.date)} the plan called for ${target.toFixed(1)} ${unit}; your trend was
-      ${lt.value.toFixed(1)} ${unit}, <span class="${ahead ? "good" : "bad"}">${Math.abs(diff).toFixed(1)} ${unit}
+    html += `<br>On ${formatDate(lt.date)} the plan called for ${fmtW(target, { unit: true })}; your trend was
+      ${fmtW(lt.value, { unit: true })}, <span class="${ahead ? "good" : "bad"}">${fmtDelta(Math.abs(diff), 1)} ${dispBase()}
       ${diff > 0 ? "above" : "below"} plan</span>.`;
   }
   el.innerHTML = html;

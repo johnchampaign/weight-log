@@ -3,7 +3,13 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
-  unit TEXT NOT NULL DEFAULT 'lb',
+  unit TEXT NOT NULL DEFAULT 'lb',      -- log unit: kg, lb or st (st stored as lb)
+  display_unit TEXT,                    -- kg, lb or st; NULL = same as unit
+  energy_unit TEXT NOT NULL DEFAULT 'kcal',  -- kcal or kJ
+  decimal_char TEXT NOT NULL DEFAULT '.',
+  first_name TEXT,
+  middle_name TEXT,
+  last_name TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   -- Diet plan (HDO "Diet Calculator"): weights in the user's unit,
   -- calorie balance signed (negative = deficit).

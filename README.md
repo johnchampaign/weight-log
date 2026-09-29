@@ -17,7 +17,6 @@ deficit/excess.
   missing days carry it unchanged; rate is a least-squares fit over the daily
   trend values.
 - Accounts (email + password), sessions last 180 days.
-- lb/kg preference.
 - Per-day comments (up to 4096 chars); comment-only days are allowed and
   never move the trend.
 - **History tab** — HDO's "Choose Monthly Log": a calendar for each year
@@ -36,8 +35,16 @@ deficit/excess.
 - **Goal tab** — HDO's diet calculator: start date/weight, goal weight and
   daily calorie deficit. When enabled, the plan is drawn on the month chart
   as a dashed yellow line, flat at the goal weight after the plan ends.
-- **Body mass index** — set a height (cm, or feet and inches) on the Goal
-  tab and the Log tab shows BMI as HDO did (`monthlog::bodyMassIndex`): from
+- **Settings tab** — HDO's account settings: display unit and log unit
+  (kilogram, pound or stone; stone shows as "14 4.2" and is stored in
+  pounds), energy unit (kcal or kJ), decimal character (123.4 or 123,4),
+  height, name, and email/password (current password required; a new
+  password signs out other devices). Weights are stored in the log unit
+  (6 decimals) and converted for display and entry; changing the log unit
+  between kg and lb converts stored weights. HDO's public-pseudonym sharing
+  is not implemented.
+- **Body mass index** — set a height (cm, or feet and inches) on the
+  Settings tab and the Log tab shows BMI as HDO did (`monthlog::bodyMassIndex`): from
   the trend on the month's last weigh-in, plus the mean trend over the days
   weighed that month. No height, no BMI.
 - **Exercise rung and flag** per day, as in HDO. Rungs (1–48, the book's
@@ -77,5 +84,5 @@ Changes to the live database go in [migrations/](migrations/) and are
 applied once, in order:
 
 ```bash
-npx wrangler d1 execute weight-log --remote --file migrations/004-rung-flag.sql -y
+npx wrangler d1 execute weight-log --remote --file migrations/005-settings.sql -y
 ```

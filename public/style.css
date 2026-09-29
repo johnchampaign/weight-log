@@ -55,25 +55,6 @@ header h1::before { content: "⚖️ "; }
 #nav-email { color: var(--muted); }
 #user-nav a { color: var(--focus); }
 
-.unit-toggle {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  overflow: hidden;
-}
-.unit-toggle button {
-  border: 0;
-  background: var(--card);
-  padding: 0.25rem 0.6rem;
-  cursor: pointer;
-  font: inherit;
-  color: var(--muted);
-}
-.unit-toggle button.active {
-  background: var(--accent);
-  color: #fff;
-}
-
 button { font: inherit; }
 
 #logout-btn, #import-btn {
@@ -260,6 +241,7 @@ main {
   color: var(--muted);
 }
 #log-table .num, #log-table td input { text-align: right; }
+#log-table td.num { white-space: nowrap; }
 #log-table tr:last-child td { border-bottom: 0; }
 
 #log-table tr.weekend { background: #faf8f3; }
@@ -325,8 +307,29 @@ td.var.bad { color: var(--bad); }
 }
 @media (max-width: 560px) {
   .tabs { gap: 0; overflow-x: auto; }
-  .tabs a { padding: 0.45rem 0.6rem; white-space: nowrap; }
+  .tabs a { padding: 0.45rem 0.42rem; white-space: nowrap; font-size: 0.9rem; }
 }
+
+/* ------------------------------------------------ settings */
+
+.settings-form fieldset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem 0.3rem;
+  margin: 0 0 0.8rem;
+}
+.settings-form legend { font-weight: 600; padding: 0 0.3rem; }
+.radio-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 1.1rem;
+  margin-bottom: 0.4rem;
+}
+.radio-row label { cursor: pointer; }
+.radio-row input { accent-color: var(--accent); }
+.row-label { width: 4.2rem; color: var(--muted); font-size: 0.9rem; }
+#acct-match { grid-column: 1 / -1; }
 
 /* ------------------------------------------------ history calendars */
 
