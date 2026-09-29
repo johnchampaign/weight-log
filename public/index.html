@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Weight Log</title>
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9878;&#65039;</text></svg>">
 </head>
 <body>
@@ -59,6 +59,7 @@
   <section id="log-view" hidden>
     <nav class="tabs" role="tablist">
       <a href="#log" role="tab" data-tab="log">Log</a>
+      <a href="#chart" role="tab" data-tab="chart">Chart</a>
       <a href="#trend" role="tab" data-tab="trend">Trend</a>
       <a href="#goal" role="tab" data-tab="goal">Goal</a>
     </nav>
@@ -83,6 +84,24 @@
           <tbody></tbody>
         </table>
       </div>
+    </div>
+
+    <div id="tab-chart" role="tabpanel" hidden>
+      <form id="chart-form" class="inline-form chart-form">
+        <strong>Last:</strong>
+        <label><input type="radio" name="chart-period" value="m"> Month</label>
+        <label><input type="radio" name="chart-period" value="q" checked> Quarter</label>
+        <label><input type="radio" name="chart-period" value="h"> Six months</label>
+        <label><input type="radio" name="chart-period" value="y"> Year</label>
+        <label><input type="radio" name="chart-period" value="c"> Custom:</label>
+        <label>From <input type="date" id="chart-from"></label>
+        <label>To <input type="date" id="chart-to"></label>
+      </form>
+      <div id="history-chart"></div>
+      <div id="history-stats" class="stats"></div>
+      <p class="muted small">Periods end on your most recent weigh-in. Weights show as floats and sinkers
+      for periods up to about four months, and as a grey line beyond that; very long periods average
+      several days into each point, as Hacker's Diet Online did.</p>
     </div>
 
     <div id="tab-trend" role="tabpanel" hidden>
@@ -120,7 +139,7 @@
     <div id="tab-goal" role="tabpanel" hidden>
       <div class="panel">
         <h2>Height</h2>
-        <p class="muted small">Used only to show your body mass index (BMI) on the Log tab. Enter either
+        <p class="muted small">Used only to show your body mass index (BMI) on the Log and Chart tabs. Enter either
         centimetres or feet and inches; leave both blank to hide BMI.</p>
         <form id="height-form" class="height-form">
           <label>Centimetres <input type="text" inputmode="decimal" id="height-cm" size="6"></label>
@@ -137,7 +156,7 @@
       <div class="panel">
         <h2>Diet plan</h2>
         <p class="muted small">Set a goal and a daily calorie deficit. Tick "Show the plan" to draw it on the
-        Log chart as a dashed yellow line, which stays flat at your goal weight once the plan's end date
+        Log and Chart tabs as a dashed yellow line, which stays flat at your goal weight once the plan's end date
         passes, so you can compare your actual trend against it.</p>
         <form id="plan-form" class="plan-form">
           <label>Start date <input type="date" id="plan-start-date" required></label>
@@ -163,6 +182,6 @@
   <a href="https://www.fourmilab.ch/hackdiet/" target="_blank" rel="noopener">John Walker's Hacker's Diet</a>.</p>
 </footer>
 
-<script type="module" src="app.js?v=8"></script>
+<script type="module" src="app.js?v=10"></script>
 </body>
 </html>

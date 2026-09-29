@@ -11,6 +11,7 @@ const state = {
   plan: null,         // {startDate, startWeight, goalWeight, calorieBalance, show}
   customRange: null,  // {from, to} for the Trend tab
   heightCm: null,     // for BMI; null = not set
+  chartPeriod: { period: "q" },  // Chart tab: m/q/h/y, or {period: "c", from, to}
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -60,6 +61,8 @@ async function enterApp() {
   state.customRange = null;
   $("#range-from").value = "";
   $("#range-to").value = "";
+  state.chartPeriod = { period: "q" };
+  document.querySelector('input[name="chart-period"][value="q"]').checked = true;
   $("#auth-view").hidden = true;
   $("#log-view").hidden = false;
   $("#user-nav").hidden = false;
@@ -162,7 +165,7 @@ function renderUnitToggle() {
 
 // ---------------------------------------------------------------- tabs
 
-const TABS = ["log", "trend", "goal"];
+const TABS = ["log", "chart", "trend", "goal"];
 
 function showTab() {
   const name = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
@@ -237,6 +240,7 @@ function render() {
   renderTable(m);
   renderChart(m);
   renderStats(m);
+  renderHistoryChart();
   renderTrendTab();
 }
 
@@ -487,29 +491,9 @@ function renderChart({ dates, today, trend, byDate, weightsByDate }) {
     xlabels += `<text x="${x(date)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${d}</text>`;
   }
 
-  // Exercise rung line on its own 1-48 scale (HDiet::monthlog::plotChart):
-  // consecutive rung days are joined; a run is carried flat one day past its
-  // last rung; a lone rung on the month's final day is drawn flat from the
-  // day before.
   let rungLine = "";
   if (hasRungs) {
-    const segs = [];
-    let last = null;
-    for (let i = 0; i < n; i++) {
-      const r = rungs[i];
-      if (r !== null) {
-        const cx = x(dates[i]), cy = yRung(r);
-        if (last) segs.push([last[0], last[1], cx, cy]);
-        else if (i === n - 1 && i > 0) segs.push([x(dates[i - 1]), cy, cx, cy]);
-        last = [cx, cy];
-      } else if (last) {
-        segs.push([last[0], last[1], x(dates[i]), last[1]]);
-        last = null;
-      }
-    }
-    rungLine = segs.map(([x1, y1, x2, y2]) =>
-      `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--rung)" stroke-width="2"/>`
-    ).join("");
+    rungLine = rungSegmentsSVG(rungs, (i) => x(dates[i]), yRung);
     for (let i = 0; i < n; i++) {
       if (rungs[i] !== null) {
         rungLine += `<circle cx="${x(dates[i]).toFixed(1)}" cy="${yRung(rungs[i]).toFixed(1)}" r="2.2" fill="var(--rung)">` +
@@ -564,6 +548,30 @@ function renderChart({ dates, today, trend, byDate, weightsByDate }) {
       ${trendPath ? `<path d="${trendPath}" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round"/>` : ""}
       ${marks}
     </svg>`;
+}
+
+// Exercise rung line (HDiet::monthlog::plotChart / history::drawChart):
+// consecutive rung days are joined; a run is carried flat one day past its
+// last rung; a lone rung on the final day is drawn flat from the day before.
+function rungSegmentsSVG(rungs, xAt, yRung) {
+  const n = rungs.length;
+  const segs = [];
+  let last = null;
+  for (let i = 0; i < n; i++) {
+    const r = rungs[i];
+    if (r !== null) {
+      const cx = xAt(i), cy = yRung(r);
+      if (last) segs.push([last[0], last[1], cx, cy]);
+      else if (i === n - 1 && i > 0) segs.push([xAt(i - 1), cy, cx, cy]);
+      last = [cx, cy];
+    } else if (last) {
+      segs.push([last[0], last[1], xAt(i), last[1]]);
+      last = null;
+    }
+  }
+  return segs.map(([x1, y1, x2, y2]) =>
+    `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--rung)" stroke-width="2"/>`
+  ).join("");
 }
 
 function escapeXML(s) {
@@ -684,6 +692,270 @@ $("#height-form").addEventListener("submit", async (e) => {
     status.textContent = err.message;
     if (err.status === 401) showAuth();
   }
+});
+
+// ---------------------------------------------------------------- chart tab
+
+// HDO "Chart Workshop" (HackDiet.pl q=histreq, history::drawChart).
+const CHART_PERIODS = { m: -1, q: -3, h: -6, y: -12 };
+
+function addDays(iso, n) {
+  return toISO(new Date(parseDate(iso).getTime() + n * 86400000));
+}
+
+function dayDiff(a, b) {
+  return Math.round((parseDate(b) - parseDate(a)) / 86400000);
+}
+
+// Standard periods end on the last weigh-in and start no earlier than the
+// first; a custom range is clamped to the log and reordered if reversed.
+function chartRange(first, last) {
+  const p = state.chartPeriod;
+  if (p.period === "c" && p.from && p.to) {
+    let { from, to } = p;
+    if (from < first || from > last) from = first;
+    if (to < first || to > last) to = last;
+    if (to < from) [from, to] = [to, from];
+    if (from !== to) return [from, to];
+  }
+  const start = intervalStart(last, CHART_PERIODS[p.period] ?? -3);
+  return [start < first ? first : start, last];
+}
+
+// Date-axis ticks: day-of-week ticks under a month, month names up to two
+// years (the year itself at January), years beyond that.
+function chartTicks(days, plotW) {
+  const n = days.length, ticks = [];
+  const months = dayDiff(days[0], days[n - 1]) / 30.44;
+  if (months > 24) {
+    const years = months / 12;
+    const every = Math.max(1, Math.ceil((years * 40) / plotW));
+    days.forEach((d, i) => {
+      const [y, m, dd] = d.split("-").map(Number);
+      if (m === 1 && dd === 1 && y % every === 0) ticks.push({ i, label: String(y) });
+    });
+    return ticks;
+  }
+  days.forEach((d, i) => {
+    const [y, m, dd] = d.split("-").map(Number);
+    if (i === 0 || dd === 1) {
+      ticks.push({ i, label: m === 1 ? String(y) : MONTHS[m - 1].slice(0, 3), major: true });
+    } else if (n - 1 < 32 && dd % 7 === 0 && dd <= 28) {
+      ticks.push({ i, label: String(dd) });
+    }
+  });
+  return ticks;
+}
+
+// SVG path through points, breaking wherever a value is null.
+function brokenPath(points) {
+  let d = "", pen = false;
+  for (const p of points) {
+    if (!p) { pen = false; continue; }
+    d += `${pen ? "L" : "M"} ${p[0].toFixed(1)} ${p[1].toFixed(1)} `;
+    pen = true;
+  }
+  return d;
+}
+
+function renderHistoryChart() {
+  const wrap = $("#history-chart"), statsEl = $("#history-stats");
+  const weighed = weighedEntries();
+  if (weighed.length === 0) {
+    wrap.innerHTML = `<p class="chart-empty">No weigh-ins yet. Your chart appears here once you've logged some.</p>`;
+    statsEl.innerHTML = "";
+    return;
+  }
+  const first = weighed[0].date, last = weighed[weighed.length - 1].date;
+  let [from, to] = chartRange(first, last);
+  if (from === to) from = addDays(to, -7);
+
+  const fromInput = $("#chart-from"), toInput = $("#chart-to");
+  fromInput.min = toInput.min = first;
+  fromInput.max = toInput.max = last;
+  fromInput.value = from;
+  toInput.value = to;
+
+  const n = dayDiff(from, to) + 1;
+  const days = Array.from({ length: n }, (_, i) => addDays(from, i));
+  const trend = buildTrendSeries(state.entries, to);
+  const byDate = new Map(state.entries.map((e) => [e.date, e]));
+  const unit = state.unit;
+
+  const weightOf = (d) => { const w = byDate.get(d)?.weight; return typeof w === "number" && w > 0 ? w : null; };
+  const rungs = days.map((d) => byDate.get(d)?.rung || null);
+  const hasRungs = rungs.some((r) => r !== null);
+
+  if (!days.some((d) => weightOf(d) !== null)) {
+    wrap.innerHTML = `<p class="chart-empty">There are no weight log entries in this date range.</p>`;
+    statsEl.innerHTML = "";
+    return;
+  }
+
+  const W = 840, H = 420, L = 52, T = 28, B = 30;
+  const R = hasRungs ? 44 : 16;
+  const plotW = W - L - R, plotH = H - T - B;
+  const INSET = 7; // keeps end-of-range diamonds clear of the axes
+  const xAt = (i) => L + INSET + ((plotW - 2 * INSET) * i) / (n - 1);
+  const pxPerDay = (plotW - 2 * INSET) / (n - 1);
+
+  // Diet plan: start (or chart start) -> plan end -> flat at goal.
+  let planPts = [];
+  if (state.plan?.show && state.plan.startDate <= to) {
+    const ps = state.plan.startDate > from ? state.plan.startDate : from;
+    const pe = planEndDate(state.plan, unit);
+    const at = [ps];
+    if (pe && pe > ps && pe < to) at.push(pe);
+    at.push(to);
+    planPts = at.map((d) => [dayDiff(from, d), planWeightOn(state.plan, d, unit)]);
+  }
+
+  // Vertical scale: weights, trend and plan in range; 1/2/5 steps, at least
+  // one unit, sized to about one label per 22px (HDO: one per text line).
+  const values = [];
+  for (const d of days) {
+    const w = weightOf(d), t = trend.get(d);
+    if (w !== null) values.push(w);
+    if (t !== undefined) values.push(t);
+  }
+  for (const [, pw] of planPts) values.push(pw);
+  let lo = Math.min(...values), hi = Math.max(...values);
+  if (hi - lo < 1e-9) { lo -= 10; hi += 10; }
+  const maxRows = plotH / 22;
+  let step = 1;
+  for (let power = 1; ; power *= 10) {
+    const s = [1, 2, 5].map((f) => f * power).find((c) => (hi - lo) / c <= maxRows);
+    if (s) { step = s; break; }
+  }
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * plotH;
+  const yRung = (r) => (H - B) - ((r - 1) / RUNG_MAX) * plotH;
+
+  let svg = `<text x="${L + plotW / 2}" y="${T - 10}" text-anchor="middle" font-size="12" fill="var(--ink)">` +
+    `${formatDate(from)} – ${formatDate(to)}</text>`;
+  for (let v = lo; v <= hi + 1e-9; v += step) {
+    svg += `<line x1="${L}" y1="${y(v)}" x2="${W - R}" y2="${y(v)}" stroke="var(--line)"/>` +
+      `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${roundLabel(v)}</text>`;
+  }
+  for (const { i, label, major } of chartTicks(days, plotW)) {
+    const tx = xAt(i);
+    svg += `<line x1="${tx}" y1="${H - B}" x2="${tx}" y2="${H - B + (major ? 6 : 4)}" stroke="var(--muted)"/>` +
+      `<text x="${tx}" y="${H - B + 18}" text-anchor="middle" font-size="11" fill="var(--muted)"` +
+      `${major ? ' font-weight="600"' : ""}>${label}</text>`;
+  }
+  svg += `<line x1="${L}" y1="${H - B}" x2="${W - R}" y2="${H - B}" stroke="var(--muted)"/>`;
+
+  let weightsSVG = "", trendD = "", rungSVG = "", lastRung = null;
+
+  if (pxPerDay >= 2) {
+    // One point per day.
+    trendD = brokenPath(days.map((d, i) => (trend.has(d) ? [xAt(i), y(trend.get(d))] : null)));
+    if (pxPerDay >= 7) {
+      // Floats and sinkers, as on the monthly chart.
+      days.forEach((d, i) => {
+        const w = weightOf(d);
+        if (w === null) return;
+        const e = byDate.get(d), wx = xAt(i), wy = y(w), ty = y(trend.get(d));
+        const tip = `${d}: ${w} ${unit}` + (e.rung ? ` · rung ${e.rung}` : "") +
+          (e.flag ? " · flagged" : "") + (e.comment ? ` — ${e.comment}` : "");
+        weightsSVG += `<line x1="${wx}" y1="${wy}" x2="${wx}" y2="${ty}" stroke="var(--good)" stroke-width="1.2"/>` +
+          `<g><title>${escapeXML(tip)}</title><path d="M ${wx} ${wy - 4} L ${wx + 4} ${wy} L ${wx} ${wy + 4} L ${wx - 4} ${wy} Z"
+            fill="${e.flag ? "var(--flag)" : "#fff"}" stroke="#4a4437" stroke-width="1.2"/></g>`;
+      });
+    } else {
+      // Weights joined by a grey line (across missed days, as in HDO).
+      const pts = [];
+      days.forEach((d, i) => { const w = weightOf(d); if (w !== null) pts.push([xAt(i), y(w)]); });
+      weightsSVG = `<path d="${brokenPath(pts)}" fill="none" stroke="var(--weight-line)" stroke-width="1.2"/>`;
+    }
+    if (hasRungs) {
+      rungSVG = rungSegmentsSVG(rungs, xAt, yRung);
+      lastRung = [...rungs].reverse().find((r) => r !== null);
+    }
+  } else {
+    // More days than pixels: average each column's days (history::getDays).
+    // Weight and trend average over weighed days only, so gaps in the log
+    // show as gaps in both lines.
+    const cols = Math.floor(plotW);
+    const wPts = [], tPts = [], rPts = [];
+    for (let c = 0; c < cols; c++) {
+      const i0 = Math.floor((n * c) / cols), i1 = Math.max(i0 + 1, Math.floor((n * (c + 1)) / cols));
+      let ws = 0, ts = 0, wn = 0, rs = 0, rn = 0;
+      for (let i = i0; i < i1 && i < n; i++) {
+        const w = weightOf(days[i]);
+        if (w !== null) { ws += w; ts += trend.get(days[i]); wn++; }
+        if (rungs[i] !== null) { rs += rungs[i]; rn++; }
+      }
+      const cx = L + (plotW * (c + 0.5)) / cols;
+      wPts.push(wn ? [cx, y(ws / wn)] : null);
+      tPts.push(wn ? [cx, y(ts / wn)] : null);
+      rPts.push(rn ? [cx, yRung(rs / rn)] : null);
+      if (rn) lastRung = Math.round(rs / rn);
+    }
+    weightsSVG = `<path d="${brokenPath(wPts)}" fill="none" stroke="var(--weight-line)" stroke-width="1"/>`;
+    trendD = brokenPath(tPts);
+    if (hasRungs) rungSVG = `<path d="${brokenPath(rPts)}" fill="none" stroke="var(--rung)" stroke-width="1.5"/>`;
+  }
+
+  // Rung scale: 1, 6, 12 … 48, skipping labels that would crowd the last rung,
+  // which is labelled itself.
+  if (hasRungs && lastRung !== null) {
+    const ax = W - R;
+    const label = (r, bold) =>
+      `<line x1="${ax - 4}" y1="${yRung(r)}" x2="${ax}" y2="${yRung(r)}" stroke="var(--muted)"/>` +
+      `<text x="${ax + 6}" y="${yRung(r) + 4}" font-size="11" fill="var(--rung)"${bold ? ' font-weight="700"' : ""}>${r}</text>`;
+    rungSVG += `<line x1="${ax}" y1="${T}" x2="${ax}" y2="${H - B}" stroke="var(--muted)"/>` +
+      `<text x="${ax + 6}" y="${T - 2}" font-size="10" fill="var(--rung)">Rung</text>`;
+    for (let r = 1; r <= RUNG_MAX; r = Math.floor(r / 6) * 6 + 6) {
+      if (Math.abs(lastRung - r) >= 6) rungSVG += label(r, false);
+    }
+    rungSVG += label(lastRung, true);
+  }
+
+  const planSVG = planPts.length
+    ? `<path d="${brokenPath(planPts.map(([i, w]) => [xAt(i), y(w)]))}" fill="none" stroke="var(--plan)"
+         stroke-width="2" stroke-dasharray="7 5"><title>Diet plan</title></path>`
+    : "";
+
+  wrap.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Weight chart ${from} to ${to}">
+      ${svg}${rungSVG}${planSVG}${pxPerDay >= 7 ? "" : weightsSVG}
+      <path d="${trendD}" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linejoin="round"/>
+      ${pxPerDay >= 7 ? weightsSVG : ""}
+    </svg>`;
+
+  // Caption (HDO prints this under the chart): rate over the whole period,
+  // % of days flagged, and BMI from the trend.
+  let cells = "";
+  const [r] = analyseTrend(trend, [[from, to]]);
+  if (r && r.slope !== null) {
+    const weekly = r.slope * 7, kcal = r.slope * KCAL_PER_UNIT[unit];
+    cells += statCell("Rate", `${weekly > 0 ? "+" : ""}${weekly.toFixed(2)} ${unit}/week`, weekly);
+    cells += statCell(kcal <= 0 ? "Calorie deficit" : "Calorie excess", `${Math.abs(Math.round(kcal))} kcal/day`, kcal);
+  }
+  const flagged = days.filter((d) => byDate.get(d)?.flag).length;
+  const pct = Math.round((flagged * 100) / n);
+  if (pct > 0) cells += statCell("Flagged", `${pct}%`, 0, `${flagged} of ${n} days`);
+  if (state.heightCm && r) {
+    const trendVals = days.filter((d) => trend.has(d)).map((d) => trend.get(d));
+    const recent = bodyMassIndex(trendVals[trendVals.length - 1], unit, state.heightCm);
+    const mean = bodyMassIndex(r.mean, unit, state.heightCm);
+    cells += statCell("Body mass index", recent.toFixed(1), 0, `mean ${mean.toFixed(1)} over the period`);
+  }
+  statsEl.innerHTML = cells;
+}
+
+$("#chart-form").addEventListener("change", (e) => {
+  if (e.target.name === "chart-period") {
+    state.chartPeriod = e.target.value === "c"
+      ? { period: "c", from: $("#chart-from").value, to: $("#chart-to").value }
+      : { period: e.target.value };
+  } else if (e.target.type === "date") {
+    document.querySelector('input[name="chart-period"][value="c"]').checked = true;
+    state.chartPeriod = { period: "c", from: $("#chart-from").value, to: $("#chart-to").value };
+  }
+  renderHistoryChart();
 });
 
 // ---------------------------------------------------------------- trend tab

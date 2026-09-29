@@ -20,6 +20,12 @@ deficit/excess.
 - lb/kg preference.
 - Per-day comments (up to 4096 chars); comment-only days are allowed and
   never move the trend.
+- **Chart tab** — HDO's Chart Workshop (`history::drawChart`): the last
+  month, quarter, six months or year up to the latest weigh-in, or any custom
+  range. Trend, weights, rung line and plan line, with the period's weekly
+  rate, calorie balance, % flagged and BMI underneath. Weights are floats and
+  sinkers at 7+ px/day, a grey line below that, and columns average several
+  days when a range has more days than pixels (HDO's `getDays`).
 - **Trend tab** — HDO's Trend Analysis: gain/loss per week, calorie
   excess/deficit, and min/mean/max trend over the last week, fortnight,
   month, quarter, six months and year (ending on the latest weigh-in), plus

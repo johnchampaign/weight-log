@@ -12,6 +12,7 @@
   --plan: #d9a400;        /* diet plan dashed line (HDO yellow) */
   --flag: #f6d55c;        /* flagged day's diamond fill (HDO yellow) */
   --rung: #2f63c9;        /* exercise rung line (HDO blue) */
+  --weight-line: #8a8a8a; /* long-range charts: weights as a line (HDO dark grey) */
 }
 
 * { box-sizing: border-box; }
@@ -192,14 +193,18 @@ main {
 
 /* ------------------------------------------------ chart */
 
-#chart-wrap {
+#chart-wrap, #history-chart {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 0.6rem;
   margin-bottom: 0.8rem;
 }
-#chart-wrap svg { display: block; width: 100%; height: auto; }
+#chart-wrap svg, #history-chart svg { display: block; width: 100%; height: auto; }
+
+.chart-form { margin-bottom: 0.8rem; }
+.chart-form label { color: var(--ink); }
+.chart-form input[type="radio"] { accent-color: var(--accent); }
 .chart-empty {
   text-align: center;
   color: var(--muted);
