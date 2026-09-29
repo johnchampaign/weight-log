@@ -212,8 +212,9 @@ function validatePlan(plan) {
 
 async function listWeights(env, user) {
   const { results } = await env.DB.prepare(
-    "SELECT date, weight, comment FROM weights WHERE user_id = ? ORDER BY date"
+    "SELECT date, weight, comment, rung, flag FROM weights WHERE user_id = ? ORDER BY date"
   ).bind(user.id).all();
+  for (const r of results) r.flag = !!r.flag;
   return json({ weights: results });
 }
 
@@ -237,23 +238,38 @@ async function putWeight(request, env, user) {
   if (comment.length > 4096) return json({ error: "Comment too long (4096 max)" }, 400);
   comment = comment || null;
 
-  if (weight === null && comment === null) {
+  let rung = null;
+  if (body.rung !== null && body.rung !== undefined && body.rung !== "") {
+    rung = parseRung(body.rung);
+    if (rung === null) return json({ error: "Rung must be a whole number from 1 to 48" }, 400);
+  }
+  const flag = body.flag === true ? 1 : 0;
+
+  if (weight === null && comment === null && rung === null && !flag) {
     await env.DB.prepare("DELETE FROM weights WHERE user_id = ? AND date = ?").bind(user.id, date).run();
     return json({ ok: true, deleted: true });
   }
 
   await env.DB.prepare(
-    `INSERT INTO weights (user_id, date, weight, comment) VALUES (?, ?, ?, ?)
-     ON CONFLICT(user_id, date) DO UPDATE SET weight = excluded.weight, comment = excluded.comment`
-  ).bind(user.id, date, weight, comment).run();
+    `INSERT INTO weights (user_id, date, weight, comment, rung, flag) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, date) DO UPDATE SET weight = excluded.weight, comment = excluded.comment,
+       rung = excluded.rung, flag = excluded.flag`
+  ).bind(user.id, date, weight, comment, rung, flag).run();
   return json({ ok: true });
 }
 
+// Exercise ladder rung: HDO accepts 1-48 and truncates fractions.
+function parseRung(value) {
+  const r = Math.floor(Number(value));
+  return isFinite(r) && r >= 1 && r <= 48 ? r : null;
+}
+
 // Accepts CSV text in either this site's export format
-// (Date,Weight,Trend,Comment) or Hacker's Diet Online CSV
-// (Date,Weight,Rung,Flag,Comment with header blocks). The comment column is
-// located from the header row; rows with neither weight nor comment are
-// skipped, existing dates are overwritten.
+// (Date,Weight,Trend,Rung,Flag,Comment) or Hacker's Diet Online CSV
+// (Date,Weight,Rung,Flag,Comment with header blocks). Weight is always the
+// second column; rung, flag and comment columns are located by header name.
+// Rows with none of weight/comment/rung/flag are skipped; existing dates are
+// overwritten.
 async function importCSV(request, env, user) {
   if (Number(request.headers.get("Content-Length") || 0) > 4_000_000) {
     return json({ error: "File too large" }, 413);
@@ -263,7 +279,7 @@ async function importCSV(request, env, user) {
 
   const rows = [];
   let skipped = 0;
-  let commentCol = null;
+  let cols = { comment: -1, rung: -1, flag: -1 };
   let plan = null;
   // HDO starts each month with "StartTrend,<carry>,<log unit>,...", where the
   // unit is 0 = kg, 1 = lb, 2 = stone (stone months are stored in lb). Months
@@ -278,8 +294,8 @@ async function importCSV(request, env, user) {
       } else if (/^Diet-Plan,/.test(line)) {
         plan = parseHDOPlan(splitCSVLine(line), user.unit);
       } else if (/^date,/i.test(line)) {
-        commentCol = line.split(",").findIndex((c) => c.trim().toLowerCase() === "comment");
-        if (commentCol < 0) commentCol = null;
+        const names = line.split(",").map((c) => c.trim().toLowerCase());
+        cols = { comment: names.indexOf("comment"), rung: names.indexOf("rung"), flag: names.indexOf("flag") };
       }
       continue;
     }
@@ -300,28 +316,33 @@ async function importCSV(request, env, user) {
         continue;
       }
     }
-    const comment = (commentCol !== null && fields[commentCol] ? fields[commentCol].trim().slice(0, 4096) : "") || null;
-    if (weight === null && comment === null) {
+    const comment = (cols.comment > 0 && fields[cols.comment] ? fields[cols.comment].trim().slice(0, 4096) : "") || null;
+    const rung = cols.rung > 0 && fields[cols.rung] ? parseRung(fields[cols.rung]) : null;
+    const flag = cols.flag > 0 && ["1", "true", "yes", "y"].includes((fields[cols.flag] || "").trim().toLowerCase()) ? 1 : 0;
+    if (weight === null && comment === null && rung === null && !flag) {
       skipped++;
       continue;
     }
-    rows.push({ date, weight, comment });
+    rows.push({ date, weight, comment, rung, flag });
   }
 
   if (rows.length === 0) {
     return json({ error: "No weight entries found in that file" }, 400);
   }
 
-  // D1 allows 100 bound parameters per statement: 4 per row -> chunks of 25.
-  const CHUNK = 25;
+  // D1 allows 100 bound parameters per statement: 6 per row -> chunks of 16.
+  const CHUNK = 16;
   const statements = [];
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
     const sql =
-      "INSERT INTO weights (user_id, date, weight, comment) VALUES " +
-      chunk.map(() => "(?, ?, ?, ?)").join(", ") +
-      " ON CONFLICT(user_id, date) DO UPDATE SET weight = excluded.weight, comment = excluded.comment";
-    statements.push(env.DB.prepare(sql).bind(...chunk.flatMap((r) => [user.id, r.date, r.weight, r.comment])));
+      "INSERT INTO weights (user_id, date, weight, comment, rung, flag) VALUES " +
+      chunk.map(() => "(?, ?, ?, ?, ?, ?)").join(", ") +
+      ` ON CONFLICT(user_id, date) DO UPDATE SET weight = excluded.weight, comment = excluded.comment,
+        rung = excluded.rung, flag = excluded.flag`;
+    statements.push(env.DB.prepare(sql).bind(
+      ...chunk.flatMap((r) => [user.id, r.date, r.weight, r.comment, r.rung, r.flag])
+    ));
   }
   if (plan) {
     statements.push(env.DB.prepare(
@@ -375,15 +396,17 @@ function splitCSVLine(line) {
 
 async function exportCSV(env, user) {
   const { results } = await env.DB.prepare(
-    "SELECT date, weight, comment FROM weights WHERE user_id = ? ORDER BY date"
+    "SELECT date, weight, comment, rung, flag FROM weights WHERE user_id = ? ORDER BY date"
   ).bind(user.id).all();
 
-  const lines = [`Date,Weight (${user.unit}),Trend (${user.unit}),Comment`];
+  const lines = [`Date,Weight (${user.unit}),Trend (${user.unit}),Rung,Flag,Comment`];
   if (results.length > 0) {
     const trend = buildTrendSeries(results, results[results.length - 1].date);
-    for (const { date, weight, comment } of results) {
+    for (const { date, weight, comment, rung, flag } of results) {
       const t = trend.get(date);
-      lines.push(`${date},${weight ?? ""},${t !== undefined ? t.toFixed(2) : ""},${csvQuote(comment)}`);
+      lines.push(
+        `${date},${weight ?? ""},${t !== undefined ? t.toFixed(2) : ""},${rung ?? ""},${flag ? 1 : 0},${csvQuote(comment)}`
+      );
     }
   }
   return new Response(lines.join("\r\n") + "\r\n", {

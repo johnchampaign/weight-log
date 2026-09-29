@@ -31,11 +31,16 @@ deficit/excess.
   tab and the Log tab shows BMI as HDO did (`monthlog::bodyMassIndex`): from
   the trend on the month's last weigh-in, plus the mean trend over the days
   weighed that month. No height, no BMI.
-- CSV export (`Date,Weight,Trend,Comment`).
+- **Exercise rung and flag** per day, as in HDO. Rungs (1–48, the book's
+  exercise ladder) plot as a blue line on their own right-hand scale; `.`
+  copies the month's previous rung, `+`/`-` step one up or down. Flagged
+  days' diamonds are filled yellow and the month shows the % flagged.
+  Commented days get a small dot beside the diamond.
+- CSV export (`Date,Weight,Trend,Rung,Flag,Comment`).
 - CSV import — accepts both this site's export format and the Hacker's Diet
   Online CSV export (`Date,Weight,Rung,Flag,Comment`). Existing dates are
-  overwritten, blank rows skipped. Comments and the diet plan import too
-  (flags/rungs do not). HDO months logged in a different unit than the
+  overwritten, blank rows skipped. Comments, rungs, flags and the diet plan
+  import too. HDO months logged in a different unit than the
   account (per-month `StartTrend` unit field) are converted.
 
 ## Stack
@@ -63,5 +68,5 @@ Changes to the live database go in [migrations/](migrations/) and are
 applied once, in order:
 
 ```bash
-npx wrangler d1 execute weight-log --remote --file migrations/003-height.sql -y
+npx wrangler d1 execute weight-log --remote --file migrations/004-rung-flag.sql -y
 ```

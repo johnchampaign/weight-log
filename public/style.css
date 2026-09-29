@@ -10,6 +10,8 @@
   --bad: #c62828;         /* above trend / gaining */
   --focus: #2c5f8a;
   --plan: #d9a400;        /* diet plan dashed line (HDO yellow) */
+  --flag: #f6d55c;        /* flagged day's diamond fill (HDO yellow) */
+  --rung: #2f63c9;        /* exercise rung line (HDO blue) */
 }
 
 * { box-sizing: border-box; }
@@ -469,12 +471,18 @@ footer {
 }
 footer a { color: inherit; }
 
+#log-table td.rung { width: 3.6rem; }
+#log-table td.rung input { width: 3rem; text-align: right; }
+#log-table td.flag { width: 2.6rem; text-align: center; }
+#log-table td.flag input { width: auto; accent-color: #c9a300; cursor: pointer; }
+
 @media (max-width: 560px) {
   main { padding: 0.7rem; }
   #log-table th, #log-table td { padding: 0.3rem 0.45rem; }
   #log-table td input { width: 4.8rem; }
+  #log-table td.rung input { width: 2.6rem; }
   #log-table td.comment input { min-width: 4rem; }
-  #log-table td.dayname { display: none; }
-  #log-table th:nth-child(2) { display: none; }
+  #log-table td.dayname, #log-table td.var { display: none; }
+  #log-table th:nth-child(2), #log-table th:nth-child(5) { display: none; }
   .month-bar h2 { min-width: 0; flex: 1; }
 }

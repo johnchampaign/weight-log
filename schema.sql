@@ -23,12 +23,14 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
--- weight is nullable: a day may carry only a comment (e.g. "In Iceland").
--- App enforces that a row has at least one of weight/comment.
+-- weight is nullable: a day may carry only a comment (e.g. "In Iceland"),
+-- rung or flag. App enforces that a row has at least one of them.
 CREATE TABLE IF NOT EXISTS weights (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   date TEXT NOT NULL,
   weight REAL,
   comment TEXT,
+  rung INTEGER,                        -- exercise ladder rung 1-48
+  flag INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, date)
 );

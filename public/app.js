@@ -226,28 +226,43 @@ function render() {
   $("#month-title").textContent = `${MONTHS[month]} ${year}`;
 
   const dates = monthDates(year, month);
-  const trend = buildTrendSeries(state.entries, dates[dates.length - 1]);
-  const weightsByDate = new Map(
-    state.entries.filter((e) => e.weight != null).map((e) => [e.date, e.weight])
-  );
-  const commentsByDate = new Map(
-    state.entries.filter((e) => e.comment).map((e) => [e.date, e.comment])
-  );
-  const today = todayISO();
+  const m = {
+    dates,
+    today: todayISO(),
+    trend: buildTrendSeries(state.entries, dates[dates.length - 1]),
+    byDate: new Map(state.entries.map((e) => [e.date, e])),
+    weightsByDate: new Map(state.entries.filter((e) => e.weight != null).map((e) => [e.date, e.weight])),
+  };
 
-  renderTable(dates, weightsByDate, commentsByDate, trend, today);
-  renderChart(dates, weightsByDate, commentsByDate, trend, today);
-  renderStats(dates, weightsByDate, trend, today);
+  renderTable(m);
+  renderChart(m);
+  renderStats(m);
   renderTrendTab();
 }
 
-function renderTable(dates, weightsByDate, commentsByDate, trend, today) {
+function makeInput(date, kind, value, label, disabled) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.autocomplete = "off";
+  input.dataset.date = date;
+  input.dataset.kind = kind;
+  input.value = value;
+  input.disabled = disabled;
+  input.setAttribute("aria-label", `${label} for ${date}`);
+  input.addEventListener("change", onDayChange);
+  input.addEventListener("keydown", onFieldKeydown);
+  input.addEventListener("input", () => input.setCustomValidity(""));
+  return input;
+}
+
+function renderTable({ dates, today, trend, byDate, weightsByDate }) {
   const tbody = $("#log-table tbody");
   tbody.textContent = "";
   for (const date of dates) {
     const d = parseDate(date);
     const dow = d.getUTCDay();
     const isFuture = date > today;
+    const entry = byDate.get(date);
     const weight = weightsByDate.get(date);
     const t = trend.get(date);
 
@@ -268,19 +283,10 @@ function renderTable(dates, weightsByDate, commentsByDate, trend, today) {
 
     const weightTd = document.createElement("td");
     weightTd.className = "num";
-    const input = document.createElement("input");
-    input.type = "text";
-    input.inputMode = "decimal";
-    input.autocomplete = "off";
-    input.dataset.date = date;
-    input.dataset.kind = "w";
-    input.value = weight !== undefined ? String(weight) : "";
-    input.placeholder = isFuture ? "" : "—";
-    input.disabled = isFuture;
-    input.setAttribute("aria-label", `Weight for ${date}`);
-    input.addEventListener("change", onDayChange);
-    input.addEventListener("keydown", onWeightKeydown);
-    weightTd.appendChild(input);
+    const wInput = makeInput(date, "w", weight !== undefined ? String(weight) : "", "Weight", isFuture);
+    wInput.inputMode = "decimal";
+    wInput.placeholder = isFuture ? "" : "—";
+    weightTd.appendChild(wInput);
 
     const trendTd = document.createElement("td");
     trendTd.className = "num";
@@ -294,30 +300,42 @@ function renderTable(dates, weightsByDate, commentsByDate, trend, today) {
       varTd.classList.add(v > 0 ? "bad" : "good");
     }
 
+    const rungTd = document.createElement("td");
+    rungTd.className = "rung";
+    const rInput = makeInput(date, "r", entry?.rung ? String(entry.rung) : "", "Exercise rung", isFuture);
+    rInput.inputMode = "numeric";
+    rInput.title = "Exercise rung 1–48.  Shortcuts: . copies the previous rung, + one higher, − one lower";
+    rungTd.appendChild(rInput);
+
+    const flagTd = document.createElement("td");
+    flagTd.className = "flag";
+    const fInput = document.createElement("input");
+    fInput.type = "checkbox";
+    fInput.dataset.date = date;
+    fInput.dataset.kind = "f";
+    fInput.checked = !!entry?.flag;
+    fInput.disabled = isFuture;
+    fInput.setAttribute("aria-label", `Flag ${date}`);
+    fInput.addEventListener("change", onDayChange);
+    flagTd.appendChild(fInput);
+
     const commentTd = document.createElement("td");
     commentTd.className = "comment";
-    const cInput = document.createElement("input");
-    cInput.type = "text";
-    cInput.autocomplete = "off";
+    const cInput = makeInput(date, "c", entry?.comment || "", "Comment", isFuture);
     cInput.maxLength = 4096;
-    cInput.dataset.date = date;
-    cInput.dataset.kind = "c";
-    cInput.value = commentsByDate.get(date) || "";
-    cInput.disabled = isFuture;
-    cInput.setAttribute("aria-label", `Comment for ${date}`);
-    cInput.addEventListener("change", onDayChange);
     commentTd.appendChild(cInput);
 
-    tr.append(dayNum, dayName, weightTd, trendTd, varTd, commentTd);
+    tr.append(dayNum, dayName, weightTd, trendTd, varTd, rungTd, flagTd, commentTd);
     tbody.appendChild(tr);
   }
 }
 
-function onWeightKeydown(e) {
-  // Enter / arrows move between day fields, like a spreadsheet.
+function onFieldKeydown(e) {
+  // Enter / arrows move down or up the same column, like a spreadsheet.
   if (e.key !== "Enter" && e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
   e.preventDefault();
-  const inputs = [...document.querySelectorAll('#log-table input[data-kind="w"]:not(:disabled)')];
+  const kind = e.target.dataset.kind;
+  const inputs = [...document.querySelectorAll(`#log-table input[data-kind="${kind}"]:not(:disabled)`)];
   const i = inputs.indexOf(e.target);
   const next = e.key === "ArrowUp" ? inputs[i - 1] : inputs[i + 1];
   if (e.key === "Enter" || e.key === "ArrowDown") e.target.dispatchEvent(new Event("change"));
@@ -325,35 +343,70 @@ function onWeightKeydown(e) {
   next?.select();
 }
 
+function fieldError(input, message) {
+  input.classList.add("save-error");
+  input.setCustomValidity(message);
+  input.reportValidity();
+}
+
+// HDO rung shortcuts: "." or "," copies the latest earlier rung this month,
+// "+" / "-" step one rung up or down from it. Returns a number, "" (blank),
+// or an error string.
+function resolveRung(date, raw) {
+  const value = raw.trim();
+  if (value === "") return "";
+  let r;
+  if (/^[.,+\-]$/.test(value)) {
+    const earlier = [...document.querySelectorAll('#log-table input[data-kind="r"]')]
+      .filter((el) => el.dataset.date < date && /^\d/.test(el.value.trim()))
+      .map((el) => Number(el.value));
+    if (earlier.length === 0) return "No earlier rung this month to copy.";
+    r = earlier[earlier.length - 1] + (value === "+" ? 1 : value === "-" ? -1 : 0);
+  } else {
+    r = Math.floor(Number(value));
+  }
+  return isFinite(r) && r >= 1 && r <= 48 ? r : "Rung must be a whole number from 1 to 48.";
+}
+
 async function onDayChange(e) {
   const input = e.target;
   const date = input.dataset.date;
-  const wInput = document.querySelector(`#log-table input[data-date="${date}"][data-kind="w"]`);
-  const cInput = document.querySelector(`#log-table input[data-date="${date}"][data-kind="c"]`);
-  const raw = wInput.value.trim().replace(",", ".");
+  const field = (kind) => document.querySelector(`#log-table input[data-date="${date}"][data-kind="${kind}"]`);
+  const wInput = field("w"), rInput = field("r"), fInput = field("f"), cInput = field("c");
 
+  const raw = wInput.value.trim().replace(",", ".");
   let weight = null;
   if (raw !== "") {
     weight = Number(raw);
     if (!isFinite(weight) || weight <= 0 || weight > 1500) {
-      wInput.classList.add("save-error");
+      fieldError(wInput, "Enter a weight, or leave it blank.");
       return;
     }
     weight = Math.round(weight * 10) / 10;
   }
+
+  const r = resolveRung(date, rInput.value);
+  if (typeof r === "string" && r !== "") {
+    fieldError(rInput, r);
+    return;
+  }
+  const rung = r === "" ? null : r;
+  rInput.value = rung ?? "";
+
+  const flag = fInput.checked;
   const comment = cInput.value.trim().slice(0, 4096) || null;
 
-  input.classList.remove("save-error");
+  for (const el of [wInput, rInput, cInput]) el.classList.remove("save-error");
   input.classList.add("saving");
   try {
-    await api("/api/weight", { method: "PUT", body: JSON.stringify({ date, weight, comment }) });
+    await api("/api/weight", { method: "PUT", body: JSON.stringify({ date, weight, comment, rung, flag }) });
     const i = state.entries.findIndex((en) => en.date === date);
-    if (weight === null && comment === null) {
+    if (weight === null && comment === null && rung === null && !flag) {
       if (i >= 0) state.entries.splice(i, 1);
     } else if (i >= 0) {
-      Object.assign(state.entries[i], { weight, comment });
+      Object.assign(state.entries[i], { weight, comment, rung, flag });
     } else {
-      state.entries.push({ date, weight, comment });
+      state.entries.push({ date, weight, comment, rung, flag });
       state.entries.sort((a, b) => a.date.localeCompare(b.date));
     }
     const active = document.activeElement;
@@ -373,18 +426,14 @@ async function onDayChange(e) {
 
 // ---------------------------------------------------------------- chart
 
-function renderChart(dates, weightsByDate, commentsByDate, trend, today) {
+const RUNG_MAX = 48;
+
+function renderChart({ dates, today, trend, byDate, weightsByDate }) {
   const wrap = $("#chart-wrap");
   const plotDates = dates.filter((d) => d <= today && trend.has(d));
   const logged = dates.filter((d) => weightsByDate.has(d));
-
-  if (logged.length === 0 && plotDates.length === 0) {
-    wrap.innerHTML = `<p class="chart-empty">No entries yet — type a weight into a day below and the trend chart appears here.</p>`;
-    return;
-  }
-
-  const W = 840, H = 300, L = 46, R = 14, T = 14, B = 26;
-  const n = dates.length;
+  const rungs = dates.map((d) => byDate.get(d)?.rung || null);
+  const hasRungs = rungs.some((r) => r !== null);
 
   const planPoints = [];
   if (state.plan?.show) {
@@ -394,16 +443,33 @@ function renderChart(dates, weightsByDate, commentsByDate, trend, today) {
     }
   }
 
+  if (logged.length === 0 && plotDates.length === 0 && planPoints.length === 0 && !hasRungs) {
+    wrap.innerHTML = `<p class="chart-empty">No entries yet — type a weight into a day below and the trend chart appears here.</p>`;
+    return;
+  }
+
+  const W = 840, H = 300, L = 46, T = 14, B = 26;
+  const R = hasRungs ? 40 : 14;
+  const n = dates.length;
+
   const values = [];
   for (const d of plotDates) values.push(trend.get(d));
   for (const d of logged) values.push(weightsByDate.get(d));
   for (const [, pw] of planPoints) values.push(pw);
-  let lo = Math.min(...values), hi = Math.max(...values);
-  const pad = Math.max((hi - lo) * 0.15, 1);
-  lo -= pad; hi += pad;
+  let lo, hi;
+  if (values.length > 0) {
+    lo = Math.min(...values);
+    hi = Math.max(...values);
+    const pad = Math.max((hi - lo) * 0.15, 1);
+    lo -= pad; hi += pad;
+  } else {
+    // Only rungs this month: HDO's default adult range.
+    [lo, hi] = state.unit === "kg" ? [40, 120] : [90, 265];
+  }
 
   const x = (date) => L + ((parseDate(date).getUTCDate() - 0.5) / n) * (W - L - R);
   const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const yRung = (r) => (H - B) - ((r - 1) / RUNG_MAX) * (H - T - B);
 
   // y gridlines: pick a step giving ~5 lines
   const span = hi - lo;
@@ -421,18 +487,62 @@ function renderChart(dates, weightsByDate, commentsByDate, trend, today) {
     xlabels += `<text x="${x(date)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${d}</text>`;
   }
 
-  // floats & sinkers: white diamond at each weight, tied to the trend line
+  // Exercise rung line on its own 1-48 scale (HDiet::monthlog::plotChart):
+  // consecutive rung days are joined; a run is carried flat one day past its
+  // last rung; a lone rung on the month's final day is drawn flat from the
+  // day before.
+  let rungLine = "";
+  if (hasRungs) {
+    const segs = [];
+    let last = null;
+    for (let i = 0; i < n; i++) {
+      const r = rungs[i];
+      if (r !== null) {
+        const cx = x(dates[i]), cy = yRung(r);
+        if (last) segs.push([last[0], last[1], cx, cy]);
+        else if (i === n - 1 && i > 0) segs.push([x(dates[i - 1]), cy, cx, cy]);
+        last = [cx, cy];
+      } else if (last) {
+        segs.push([last[0], last[1], x(dates[i]), last[1]]);
+        last = null;
+      }
+    }
+    rungLine = segs.map(([x1, y1, x2, y2]) =>
+      `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--rung)" stroke-width="2"/>`
+    ).join("");
+    for (let i = 0; i < n; i++) {
+      if (rungs[i] !== null) {
+        rungLine += `<circle cx="${x(dates[i]).toFixed(1)}" cy="${yRung(rungs[i]).toFixed(1)}" r="2.2" fill="var(--rung)">` +
+          `<title>${dates[i]}: rung ${rungs[i]}</title></circle>`;
+      }
+    }
+    const ax = W - R;
+    rungLine += `<line x1="${ax}" y1="${T}" x2="${ax}" y2="${H - B}" stroke="var(--muted)" stroke-width="1"/>` +
+      `<text x="${ax + 6}" y="${T - 2}" font-size="10" fill="var(--rung)">Rung</text>`;
+    for (let r = 1; r <= RUNG_MAX; r = Math.floor(r / 6) * 6 + 6) {
+      rungLine += `<line x1="${ax - 4}" y1="${yRung(r)}" x2="${ax}" y2="${yRung(r)}" stroke="var(--muted)"/>` +
+        `<text x="${ax + 6}" y="${yRung(r) + 4}" font-size="11" fill="var(--rung)">${r}</text>`;
+    }
+  }
+
+  // floats & sinkers: diamond at each weight, tied to the trend line; flagged
+  // days are filled yellow (as in HDO), commented days get a dot on the side
+  // away from the trend so the float/sinker line doesn't hide it.
   let marks = "";
   for (const date of logged) {
     const wx = x(date), wy = y(weightsByDate.get(date)), ty = y(trend.get(date));
     marks += `<line x1="${wx}" y1="${wy}" x2="${wx}" y2="${ty}" stroke="var(--good)" stroke-width="1.4"/>`;
   }
   for (const date of logged) {
+    const e = byDate.get(date);
     const wx = x(date), wy = y(weightsByDate.get(date));
-    const comment = commentsByDate.get(date);
-    const tip = `${date}: ${weightsByDate.get(date)} ${state.unit}` + (comment ? ` — ${comment}` : "");
-    marks += `<path d="M ${wx} ${wy - 4.6} L ${wx + 4.6} ${wy} L ${wx} ${wy + 4.6} L ${wx - 4.6} ${wy} Z"
-              fill="${comment ? "#f6d55c" : "#fff"}" stroke="#4a4437" stroke-width="1.3"><title>${escapeXML(tip)}</title></path>`;
+    const dotY = wy > y(trend.get(date)) ? wy + 8.5 : wy - 8.5;
+    const tip = `${date}: ${weightsByDate.get(date)} ${state.unit}` +
+      (e.rung ? ` · rung ${e.rung}` : "") + (e.flag ? " · flagged" : "") + (e.comment ? ` — ${e.comment}` : "");
+    marks += `<g><title>${escapeXML(tip)}</title>` +
+      `<path d="M ${wx} ${wy - 4.6} L ${wx + 4.6} ${wy} L ${wx} ${wy + 4.6} L ${wx - 4.6} ${wy} Z"
+              fill="${e.flag ? "var(--flag)" : "#fff"}" stroke="#4a4437" stroke-width="1.3"/>` +
+      (e.comment ? `<circle cx="${wx}" cy="${dotY}" r="2.2" fill="var(--ink)"/>` : "") + `</g>`;
   }
 
   const trendPath = plotDates.map((d, i) => `${i === 0 ? "M" : "L"} ${x(d).toFixed(1)} ${y(trend.get(d)).toFixed(1)}`).join(" ");
@@ -449,8 +559,9 @@ function renderChart(dates, weightsByDate, commentsByDate, trend, today) {
   wrap.innerHTML = `
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Weight and trend chart">
       ${grid}${xlabels}
+      ${rungLine}
       ${planLine}
-      <path d="${trendPath}" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round"/>
+      ${trendPath ? `<path d="${trendPath}" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round"/>` : ""}
       ${marks}
     </svg>`;
 }
@@ -465,48 +576,54 @@ function roundLabel(v) {
 
 // ---------------------------------------------------------------- stats
 
-function renderStats(dates, weightsByDate, trend, today) {
+function renderStats({ dates, trend, byDate, weightsByDate }) {
   const el = $("#stats");
   const lastLogged = [...dates].reverse().find((d) => weightsByDate.has(d));
-
-  if (!lastLogged) {
-    el.innerHTML = "";
-    return;
-  }
-
-  // slope: least-squares fit over daily trend values through the last logged day,
-  // exactly as Hacker's Diet Online does.
-  const fitValues = dates.filter((d) => d <= lastLogged && trend.has(d)).map((d) => trend.get(d));
-  const slope = fitSlope(fitValues);
   const unit = state.unit;
+  let cells = "";
 
-  const entriesCount = dates.filter((d) => weightsByDate.has(d)).length;
-  const endTrend = trend.get(lastLogged);
+  if (lastLogged) {
+    // slope: least-squares fit over daily trend values through the last logged day,
+    // exactly as Hacker's Diet Online does.
+    const fitValues = dates.filter((d) => d <= lastLogged && trend.has(d)).map((d) => trend.get(d));
+    const slope = fitSlope(fitValues);
 
-  let cells = statCell("Trend now", `${endTrend.toFixed(1)} ${unit}`);
-  cells += statCell("Entries this month", String(entriesCount));
+    const entriesCount = dates.filter((d) => weightsByDate.has(d)).length;
+    const endTrend = trend.get(lastLogged);
 
-  if (slope !== null) {
-    const weekly = slope * 7;
-    const sign = weekly > 0 ? "+" : "";
-    cells += statCell("Rate", `${sign}${weekly.toFixed(2)} ${unit}/week`, weekly);
-    const kcal = slope * KCAL_PER_UNIT[unit];
-    cells += statCell(
-      kcal <= 0 ? "Calorie deficit" : "Calorie excess",
-      `${Math.abs(Math.round(kcal))} kcal/day`,
-      kcal
-    );
+    cells += statCell("Trend now", `${endTrend.toFixed(1)} ${unit}`);
+    cells += statCell("Entries this month", String(entriesCount));
+
+    if (slope !== null) {
+      const weekly = slope * 7;
+      const sign = weekly > 0 ? "+" : "";
+      cells += statCell("Rate", `${sign}${weekly.toFixed(2)} ${unit}/week`, weekly);
+      const kcal = slope * KCAL_PER_UNIT[unit];
+      cells += statCell(
+        kcal <= 0 ? "Calorie deficit" : "Calorie excess",
+        `${Math.abs(Math.round(kcal))} kcal/day`,
+        kcal
+      );
+    }
+
+    // HDiet::monthlog::bodyMassIndex: trend on the month's last weigh-in, and
+    // the mean of the trend over the days weighed that month.
+    if (state.heightCm) {
+      const weighedTrend = dates.filter((d) => weightsByDate.has(d)).map((d) => trend.get(d));
+      const meanTrend = weighedTrend.reduce((a, b) => a + b, 0) / weighedTrend.length;
+      const recent = bodyMassIndex(endTrend, unit, state.heightCm);
+      const mean = bodyMassIndex(meanTrend, unit, state.heightCm);
+      cells += statCell("Body mass index", recent.toFixed(1), 0, `month mean ${mean.toFixed(1)}`);
+    }
   }
 
-  // HDiet::monthlog::bodyMassIndex: trend on the month's last weigh-in, and
-  // the mean of the trend over the days weighed that month.
-  if (state.heightCm) {
-    const weighedTrend = dates.filter((d) => weightsByDate.has(d)).map((d) => trend.get(d));
-    const meanTrend = weighedTrend.reduce((a, b) => a + b, 0) / weighedTrend.length;
-    const recent = bodyMassIndex(endTrend, unit, state.heightCm);
-    const mean = bodyMassIndex(meanTrend, unit, state.heightCm);
-    cells += statCell("Body mass index", recent.toFixed(1), 0, `month mean ${mean.toFixed(1)}`);
+  // HDiet::monthlog::fractionFlagged: flagged days over all days in the month.
+  const flagged = dates.filter((d) => byDate.get(d)?.flag).length;
+  const pct = Math.round((flagged * 100) / dates.length);
+  if (pct > 0) {
+    cells += statCell("Flagged", `${pct}%`, 0, `${flagged} of ${dates.length} days`);
   }
+
   el.innerHTML = cells;
 }
 
