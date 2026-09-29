@@ -323,6 +323,58 @@ td.var.bad { color: var(--bad); }
   border-bottom-color: var(--accent);
   font-weight: 650;
 }
+@media (max-width: 560px) {
+  .tabs { gap: 0; overflow-x: auto; }
+  .tabs a { padding: 0.45rem 0.6rem; white-space: nowrap; }
+}
+
+/* ------------------------------------------------ history calendars */
+
+.year-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.9rem;
+  margin: 0.4rem 0 1.1rem;
+}
+.year-cal {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.year-cal h3 {
+  margin: 0;
+  padding: 0.35rem;
+  text-align: center;
+  font-size: 1rem;
+  background: #efece4;
+}
+.year-cal .months {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+.year-cal .months > * {
+  padding: 0.45rem 0;
+  text-align: center;
+  font-size: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+.year-cal .months > :not(:nth-child(3n)) { border-right: 1px solid var(--line); }
+.year-cal .months span { color: #b8b2a4; }
+.year-cal .months a {
+  color: var(--focus);
+  font-weight: 600;
+  text-decoration: none;
+}
+.year-cal .months a:hover { background: var(--accent-soft); }
+.year-cal .months .viewing { background: var(--accent-soft); box-shadow: inset 0 -3px 0 var(--accent); }
+#goto-month select {
+  font: inherit;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+}
 
 .panel {
   background: var(--card);

@@ -165,7 +165,7 @@ function renderUnitToggle() {
 
 // ---------------------------------------------------------------- tabs
 
-const TABS = ["log", "chart", "trend", "goal"];
+const TABS = ["log", "history", "chart", "trend", "goal"];
 
 function showTab() {
   const name = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
@@ -240,6 +240,7 @@ function render() {
   renderTable(m);
   renderChart(m);
   renderStats(m);
+  renderHistoryTab();
   renderHistoryChart();
   renderTrendTab();
 }
@@ -692,6 +693,69 @@ $("#height-form").addEventListener("submit", async (e) => {
     status.textContent = err.message;
     if (err.status === 401) showAuth();
   }
+});
+
+// ---------------------------------------------------------------- history tab
+
+// HDO "Choose Monthly Log" (HackDiet.pl q=calendar): a calendar per year that
+// has entries, oldest first; months with entries link to that month's log.
+function renderHistoryTab() {
+  const byMonth = new Map();
+  for (const e of state.entries) {
+    const ym = e.date.slice(0, 7);
+    const c = byMonth.get(ym) || { weighIns: 0, entries: 0 };
+    c.entries++;
+    if (typeof e.weight === "number" && e.weight > 0) c.weighIns++;
+    byMonth.set(ym, c);
+  }
+  const years = [...new Set([...byMonth.keys()].map((ym) => ym.slice(0, 4)))].sort();
+  const viewing = `${state.view.year}-${String(state.view.month + 1).padStart(2, "0")}`;
+
+  $("#history-empty").hidden = years.length > 0;
+  $("#year-calendars").innerHTML = years.map((y) => {
+    const cells = MONTHS.map((name, i) => {
+      const ym = `${y}-${String(i + 1).padStart(2, "0")}`;
+      const c = byMonth.get(ym);
+      const cls = ym === viewing ? ' class="viewing"' : "";
+      if (!c) return `<span${cls}>${name.slice(0, 3)}</span>`;
+      const tip = c.weighIns === 1 ? "1 weigh-in" : `${c.weighIns} weigh-ins`;
+      return `<a href="#log" data-month="${ym}" title="${name} ${y}: ${tip}"${cls}>${name.slice(0, 3)}</a>`;
+    }).join("");
+    return `<div class="year-cal"><h3>${y}</h3><div class="months">${cells}</div></div>`;
+  }).join("");
+
+  // "Show log for" picker: any month back to 1985 (as HDO) or the first entry.
+  const ySel = $("#goto-y"), mSel = $("#goto-m");
+  if (mSel.options.length === 0) {
+    mSel.innerHTML = MONTHS.map((name, i) => `<option value="${i}">${name}</option>`).join("");
+  }
+  const thisYear = new Date().getFullYear();
+  const oldest = Math.min(1985, years.length ? Number(years[0]) : thisYear);
+  if (ySel.options.length !== thisYear - oldest + 1) {
+    ySel.innerHTML = Array.from({ length: thisYear - oldest + 1 }, (_, k) => `<option>${thisYear - k}</option>`).join("");
+  }
+  mSel.value = String(state.view.month);
+  ySel.value = String(state.view.year);
+}
+
+function openMonth(year, month) {
+  state.view = { year, month };
+  render();
+  location.hash = "#log";
+  window.scrollTo(0, 0);
+}
+
+$("#year-calendars").addEventListener("click", (e) => {
+  const link = e.target.closest("a[data-month]");
+  if (!link) return;
+  e.preventDefault();
+  const [y, m] = link.dataset.month.split("-").map(Number);
+  openMonth(y, m - 1);
+});
+
+$("#goto-month").addEventListener("submit", (e) => {
+  e.preventDefault();
+  openMonth(Number($("#goto-y").value), Number($("#goto-m").value));
 });
 
 // ---------------------------------------------------------------- chart tab

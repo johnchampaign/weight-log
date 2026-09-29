@@ -20,6 +20,9 @@ deficit/excess.
 - lb/kg preference.
 - Per-day comments (up to 4096 chars); comment-only days are allowed and
   never move the trend.
+- **History tab** — HDO's "Choose Monthly Log": a calendar for each year
+  with entries, oldest first; months with entries open that month's log.
+  "Show log for" jumps to any month back to 1985.
 - **Chart tab** — HDO's Chart Workshop (`history::drawChart`): the last
   month, quarter, six months or year up to the latest weigh-in, or any custom
   range. Trend, weights, rung line and plan line, with the period's weekly

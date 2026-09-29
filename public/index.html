@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Weight Log</title>
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=9">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9878;&#65039;</text></svg>">
 </head>
 <body>
@@ -59,6 +59,7 @@
   <section id="log-view" hidden>
     <nav class="tabs" role="tablist">
       <a href="#log" role="tab" data-tab="log">Log</a>
+      <a href="#history" role="tab" data-tab="history">History</a>
       <a href="#chart" role="tab" data-tab="chart">Chart</a>
       <a href="#trend" role="tab" data-tab="trend">Trend</a>
       <a href="#goal" role="tab" data-tab="goal">Goal</a>
@@ -83,6 +84,20 @@
           </thead>
           <tbody></tbody>
         </table>
+      </div>
+    </div>
+
+    <div id="tab-history" role="tabpanel" hidden>
+      <div class="panel">
+        <h2>Choose a month</h2>
+        <p id="history-empty" class="muted" hidden>No log entries yet. Months you log will appear here.</p>
+        <div id="year-calendars" class="year-grid"></div>
+        <form id="goto-month" class="inline-form">
+          <strong>Show log for:</strong>
+          <select id="goto-m" aria-label="Month"></select>
+          <select id="goto-y" aria-label="Year"></select>
+          <button type="submit">Show</button>
+        </form>
       </div>
     </div>
 
@@ -182,6 +197,6 @@
   <a href="https://www.fourmilab.ch/hackdiet/" target="_blank" rel="noopener">John Walker's Hacker's Diet</a>.</p>
 </footer>
 
-<script type="module" src="app.js?v=10"></script>
+<script type="module" src="app.js?v=11"></script>
 </body>
 </html>
