@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Weight Log</title>
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=12">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9878;&#65039;</text></svg>">
 </head>
 <body>
@@ -45,6 +45,32 @@
         </label>
         <button type="submit" id="auth-submit">Sign in</button>
         <p id="auth-error" class="error" role="alert" hidden></p>
+        <p class="forgot-row"><a href="#" id="forgot-link" hidden>Forgot your password?</a></p>
+      </form>
+
+      <form id="forgot-form" hidden>
+        <h2 class="auth-heading">Reset your password</h2>
+        <p class="muted small">Enter the email address you sign in with and we'll send you a link to choose
+        a new password.</p>
+        <label>Email
+          <input type="email" id="forgot-email" autocomplete="username" required>
+        </label>
+        <button type="submit" id="forgot-submit" class="auth-primary">Send reset link</button>
+        <p id="forgot-message" class="small" role="status" hidden></p>
+        <p class="forgot-row"><a href="#" class="back-to-signin">Back to sign in</a></p>
+      </form>
+
+      <form id="reset-form" hidden>
+        <h2 class="auth-heading">Choose a new password</h2>
+        <label>New password
+          <input type="password" id="reset-password" autocomplete="new-password" minlength="8" required>
+        </label>
+        <label>Retype new password
+          <input type="password" id="reset-retype" autocomplete="new-password" minlength="8" required>
+        </label>
+        <button type="submit" id="reset-submit" class="auth-primary">Save password and sign in</button>
+        <p id="reset-error" class="error" role="alert" hidden></p>
+        <p class="forgot-row"><a href="#" class="back-to-signin">Back to sign in</a></p>
       </form>
       <p class="auth-blurb">Log your weight daily; the red line shows the real
       trend beneath the day-to-day noise — the method from
@@ -271,6 +297,6 @@
   <a href="https://www.fourmilab.ch/hackdiet/" target="_blank" rel="noopener">John Walker's Hacker's Diet</a>.</p>
 </footer>
 
-<script type="module" src="app.js?v=14"></script>
+<script type="module" src="app.js?v=15"></script>
 </body>
 </html>

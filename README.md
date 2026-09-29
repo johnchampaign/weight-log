@@ -17,6 +17,11 @@ deficit/excess.
   missing days carry it unchanged; rate is a least-squares fit over the daily
   trend values.
 - Accounts (email + password), sessions last 180 days.
+- **Password reset by email**: one-time links valid for an hour (only a
+  hash is stored; the token travels in the URL fragment), three requests
+  per account per hour, identical replies whether or not an address has an
+  account. Using a link signs out every device and retires the account's
+  other links. Hidden until email sending is configured (see below).
 - Per-day comments (up to 4096 chars); comment-only days are allowed and
   never move the trend.
 - **History tab** — HDO's "Choose Monthly Log": a calendar for each year
@@ -86,3 +91,26 @@ applied once, in order:
 ```bash
 npx wrangler d1 execute weight-log --remote --file migrations/005-settings.sql -y
 ```
+
+## Enabling password reset email
+
+Reset emails go through Cloudflare Email Service, which needs the Workers
+Paid plan to send to arbitrary addresses. Once the account has it:
+
+```bash
+npx wrangler email sending enable johnchampaign.com
+npx wrangler email sending dns get johnchampaign.com
+```
+
+Then add to `wrangler.jsonc` and deploy:
+
+```jsonc
+"send_email": [{ "name": "EMAIL" }],
+"vars": { "MAIL_FROM": "noreply@johnchampaign.com" }
+```
+
+`/api/features` then reports `passwordReset: true` and the sign-in page
+shows "Forgot your password?". To test locally without sending, run
+`wrangler dev` with those two entries: the binding simulates delivery and
+writes each email under `.wrangler/tmp/email/`.
+

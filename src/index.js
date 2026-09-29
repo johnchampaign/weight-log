@@ -6,6 +6,8 @@ import { buildTrendSeries } from "../public/trend.js";
 const KG_TO_LB = 2.2046226218;
 const PBKDF2_ITERATIONS = 100000;
 const SESSION_DAYS = 180;
+const RESET_MINUTES = 60;
+const RESETS_PER_HOUR = 3;
 const COOKIE = "session";
 
 export default {
@@ -15,7 +17,7 @@ export default {
       return json({ error: "Not found" }, 404);
     }
     try {
-      return await route(request, env, url);
+      return await route(request, env, url, ctx);
     } catch (err) {
       console.log(JSON.stringify({ event: "unhandled_error", path: url.pathname, message: err.message }));
       return json({ error: "Internal error" }, 500);
@@ -23,7 +25,7 @@ export default {
   },
 };
 
-async function route(request, env, url) {
+async function route(request, env, url, ctx) {
   const path = url.pathname;
   const method = request.method;
 
@@ -38,6 +40,9 @@ async function route(request, env, url) {
   if (path === "/api/register" && method === "POST") return register(request, env);
   if (path === "/api/login" && method === "POST") return login(request, env);
   if (path === "/api/logout" && method === "POST") return logout(request, env);
+  if (path === "/api/features" && method === "GET") return json({ passwordReset: resetEmailEnabled(env) });
+  if (path === "/api/password-reset" && method === "POST") return requestReset(request, env, url, ctx);
+  if (path === "/api/password-reset/confirm" && method === "POST") return confirmReset(request, env);
 
   const user = await authenticate(request, env);
   if (!user) return json({ error: "Not signed in" }, 401);
@@ -136,6 +141,105 @@ async function authenticate(request, env) {
   ).bind(tokenHash, Date.now()).first();
   if (row) row.tokenHash = tokenHash;
   return row ?? null;
+}
+
+// ---------------------------------------------------------------- password reset
+
+// Email goes out through the Cloudflare Email Service binding (EMAIL) from
+// MAIL_FROM; both are configured in wrangler.jsonc. Without them the
+// feature reports itself off and the sign-in page hides the link.
+function resetEmailEnabled(env) {
+  return !!(env.EMAIL && env.MAIL_FROM);
+}
+
+// Always answers the same way, and sends in the background, so the reply
+// never reveals whether an address has an account.
+async function requestReset(request, env, url, ctx) {
+  if (!resetEmailEnabled(env)) {
+    return json({ error: "Password reset by email isn't available yet" }, 503);
+  }
+  const body = await readJSON(request);
+  const email = normalizeEmail(body?.email);
+  const generic = json({ ok: true });
+  if (!validEmail(email)) return generic;
+
+  const now = Date.now();
+  await env.DB.prepare("DELETE FROM password_resets WHERE expires_at < ?").bind(now).run();
+  const user = await env.DB.prepare("SELECT id, email FROM users WHERE email = ?").bind(email).first();
+  if (!user) return generic;
+
+  const recent = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM password_resets WHERE user_id = ? AND created_at > ?"
+  ).bind(user.id, now - 3600000).first();
+  if (recent.n >= RESETS_PER_HOUR) {
+    console.log(JSON.stringify({ event: "password_reset_rate_limited", user_id: user.id }));
+    return generic;
+  }
+
+  const token = randomHex(32);
+  await env.DB.prepare(
+    "INSERT INTO password_resets (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)"
+  ).bind(await sha256Hex(token), user.id, now, now + RESET_MINUTES * 60000).run();
+
+  ctx.waitUntil(sendResetEmail(env, user.email, `${url.origin}/#reset=${token}`));
+  return generic;
+}
+
+async function sendResetEmail(env, to, link) {
+  const text =
+    `Someone (hopefully you) asked to reset the password for the Weight Log account ${to}.\n\n` +
+    `To choose a new password, open this link within the next hour:\n\n${link}\n\n` +
+    `If you didn't ask for this, you can ignore this email. Your password won't change.\n`;
+  const html =
+    `<p>Someone (hopefully you) asked to reset the password for the Weight Log account ` +
+    `<strong>${escapeHTML(to)}</strong>.</p>` +
+    `<p><a href="${escapeHTML(link)}">Choose a new password</a> (this link works for the next hour).</p>` +
+    `<p>If you didn't ask for this, you can ignore this email. Your password won't change.</p>`;
+  try {
+    await env.EMAIL.send({
+      to,
+      from: { email: env.MAIL_FROM, name: "Weight Log" },
+      subject: "Reset your Weight Log password",
+      text,
+      html,
+    });
+    console.log(JSON.stringify({ event: "password_reset_sent" }));
+  } catch (err) {
+    console.log(JSON.stringify({ event: "password_reset_send_failed", code: err.code, message: err.message }));
+  }
+}
+
+// A valid link sets the new password, signs out every device, retires all
+// of the account's reset links, and signs this browser in.
+async function confirmReset(request, env) {
+  const body = await readJSON(request);
+  const token = typeof body?.token === "string" ? body.token : "";
+  const password = typeof body?.newPassword === "string" ? body.newPassword : "";
+  if (password.length < 8) return json({ error: "New password must be at least 8 characters" }, 400);
+
+  const row = token && /^[0-9a-f]{64}$/.test(token)
+    ? await env.DB.prepare(
+        `SELECT r.user_id, u.email, u.unit FROM password_resets r JOIN users u ON u.id = r.user_id
+         WHERE r.token_hash = ? AND r.expires_at > ?`
+      ).bind(await sha256Hex(token), Date.now()).first()
+    : null;
+  if (!row) {
+    return json({ error: "This reset link is invalid or has expired. Please ask for a new one." }, 400);
+  }
+
+  const salt = randomHex(16);
+  await env.DB.batch([
+    env.DB.prepare("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?")
+      .bind(await hashPassword(password, salt), salt, row.user_id),
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(row.user_id),
+    env.DB.prepare("DELETE FROM password_resets WHERE user_id = ?").bind(row.user_id),
+  ]);
+  console.log(JSON.stringify({ event: "password_reset_completed", user_id: row.user_id }));
+  return createSession(env, row.user_id, { email: row.email, unit: row.unit });
+}
+
+function escapeHTML(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 // ---------------------------------------------------------------- data
@@ -258,7 +362,8 @@ async function saveAccount(request, env, user) {
     const salt = randomHex(16);
     statements.push(
       env.DB.prepare("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?").bind(await hashPassword(pw, salt), salt, user.id),
-      env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?").bind(user.id, user.tokenHash)
+      env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?").bind(user.id, user.tokenHash),
+      env.DB.prepare("DELETE FROM password_resets WHERE user_id = ?").bind(user.id)
     );
     changed.push("password");
   }

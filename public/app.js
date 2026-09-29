@@ -114,9 +114,22 @@ async function api(path, options = {}) {
 
 // ---------------------------------------------------------------- boot
 
+let resetToken = null;
+
 async function boot() {
   const now = new Date();
   state.view = { year: now.getFullYear(), month: now.getMonth() };
+  api("/api/features").then((f) => { $("#forgot-link").hidden = !f.passwordReset; }).catch(() => {});
+
+  // A password reset link: keep the token in memory only, out of the
+  // address bar and history.
+  const reset = location.hash.match(/^#reset=([0-9a-f]{64})$/);
+  if (reset) {
+    resetToken = reset[1];
+    history.replaceState(null, "", location.pathname);
+    showAuth("reset");
+    return;
+  }
   try {
     await enterApp();
   } catch {
@@ -124,11 +137,17 @@ async function boot() {
   }
 }
 
-function showAuth() {
+// panel: "signin" (sign in / create account), "forgot" or "reset".
+function showAuth(panel = "signin") {
   $("#auth-view").hidden = false;
   $("#log-view").hidden = true;
   $("#user-nav").hidden = true;
-  $("#auth-email").focus();
+  $(".auth-tabs").hidden = panel !== "signin";
+  $("#auth-form").hidden = panel !== "signin";
+  $("#forgot-form").hidden = panel !== "forgot";
+  $("#reset-form").hidden = panel !== "reset";
+  const focus = { signin: "#auth-email", forgot: "#forgot-email", reset: "#reset-password" }[panel];
+  $(focus).focus();
 }
 
 async function enterApp() {
@@ -204,6 +223,66 @@ $("#auth-form").addEventListener("submit", async (e) => {
     const el = $("#auth-error");
     el.textContent = err.message;
     el.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------- password reset
+
+$("#forgot-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  $("#forgot-email").value = $("#auth-email").value;
+  $("#forgot-message").hidden = true;
+  showAuth("forgot");
+});
+
+for (const link of document.querySelectorAll(".back-to-signin")) {
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    showAuth("signin");
+  });
+}
+
+$("#forgot-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("#forgot-submit"), msg = $("#forgot-message");
+  btn.disabled = true;
+  try {
+    await api("/api/password-reset", { method: "POST", body: JSON.stringify({ email: $("#forgot-email").value }) });
+    msg.textContent = "If an account uses that address, a reset link is on its way. It works for one hour; " +
+      "check your spam folder if it doesn't arrive in a few minutes.";
+    msg.className = "small";
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "small error";
+  } finally {
+    msg.hidden = false;
+    btn.disabled = false;
+  }
+});
+
+$("#reset-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = $("#reset-error"), btn = $("#reset-submit");
+  err.hidden = true;
+  if ($("#reset-password").value !== $("#reset-retype").value) {
+    err.textContent = "The two passwords don't match.";
+    err.hidden = false;
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await api("/api/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({ token: resetToken, newPassword: $("#reset-password").value }),
+    });
+    resetToken = null;
+    $("#reset-password").value = $("#reset-retype").value = "";
+    await enterApp();
+  } catch (e2) {
+    err.textContent = e2.message;
+    err.hidden = false;
   } finally {
     btn.disabled = false;
   }

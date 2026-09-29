@@ -127,7 +127,7 @@ main {
   outline-offset: 1px;
 }
 
-#auth-submit {
+#auth-submit, .auth-primary {
   width: 100%;
   padding: 0.6rem;
   border: 0;
@@ -137,7 +137,11 @@ main {
   font-weight: 600;
   cursor: pointer;
 }
-#auth-submit:disabled { opacity: 0.6; }
+#auth-submit:disabled, .auth-primary:disabled { opacity: 0.6; }
+.forgot-row { margin: 0.9rem 0 0; text-align: center; font-size: 0.85rem; }
+.forgot-row a { color: var(--focus); }
+.auth-heading { margin: 0 0 0.4rem; font-size: 1.1rem; }
+#forgot-message { color: var(--good); }
 
 .error { color: var(--bad); font-size: 0.85rem; }
 
