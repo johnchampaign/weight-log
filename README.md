@@ -82,6 +82,7 @@ requests.
 npm install
 npx wrangler dev        # local, uses a local D1 copy
 npx wrangler deploy
+npm test
 ```
 
 Schema: [schema.sql](schema.sql) is the full schema for a fresh database.
