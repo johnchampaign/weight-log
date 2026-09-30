@@ -546,7 +546,7 @@ footer a { color: inherit; }
   #log-table td input { width: 4.8rem; }
   #log-table td.rung input { width: 2.6rem; }
   #log-table td.comment input { min-width: 4rem; }
-  #log-table td.dayname, #log-table td.var { display: none; }
-  #log-table th:nth-child(2), #log-table th:nth-child(5) { display: none; }
+  #log-table td.dayname { display: none; }
+  #log-table th:nth-child(2) { display: none; }
   .month-bar h2 { min-width: 0; flex: 1; }
 }
